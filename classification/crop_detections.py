@@ -56,7 +56,7 @@ import json
 import os
 from typing import Any, BinaryIO, Optional
 
-from azure.storage.blob import ContainerClient
+# from azure.storage.blob import ContainerClient
 from PIL import Image, ImageOps
 from tqdm import tqdm
 
@@ -231,8 +231,8 @@ def download_and_crop(
     images_failed_download = []
 
     container_client = None
-    if container_url is not None:
-        container_client = ContainerClient.from_container_url(container_url)
+    # if container_url is not None:
+    #     container_client = ContainerClient.from_container_url(container_url)
 
     print(f'Getting bbox info for {len(detections)} images...')
     for img_path in tqdm(sorted(detections.keys())):
@@ -351,21 +351,21 @@ def load_and_crop(img_path: str,
         if os.path.exists(full_img_path):
             img = load_local_image(full_img_path)
 
-    # try to download image from Blob Storage
-    if img is None and container_client is not None:
-        debug_path = img_path
-        with io.BytesIO() as stream:
-            container_client.download_blob(img_path).readinto(stream)
-            stream.seek(0)
+    # # try to download image from Blob Storage
+    # if img is None and container_client is not None:
+    #     debug_path = img_path
+    #     with io.BytesIO() as stream:
+    #         container_client.download_blob(img_path).readinto(stream)
+    #         stream.seek(0)
 
-            if save_full_image:
-                os.makedirs(os.path.dirname(full_img_path), exist_ok=True)
-                with open(full_img_path, 'wb') as f:
-                    f.write(stream.read())
-                stream.seek(0)
+    #         if save_full_image:
+    #             os.makedirs(os.path.dirname(full_img_path), exist_ok=True)
+    #             with open(full_img_path, 'wb') as f:
+    #                 f.write(stream.read())
+    #             stream.seek(0)
 
-            img = load_local_image(stream)
-        did_download = True
+    #         img = load_local_image(stream)
+    #     did_download = True
 
     assert img is not None, 'image "{}" failed to load or download properly'.format(
         debug_path)
