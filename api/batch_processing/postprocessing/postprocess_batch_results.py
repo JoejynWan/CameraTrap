@@ -35,13 +35,8 @@ import warnings
 from typing import Any, Dict, Iterable, Optional, Tuple
 from enum import IntEnum
 from multiprocessing.pool import ThreadPool
-
-# This line was added circa 2018 and it made sense at the time; removing it in 2022
-# because matplotlib *mostly* does the right thing now, and overwriting the current
-# matplotlib environment is questionable behavior.  Possible breaking change for 
-# some users.
-#
-# import matplotlib; matplotlib.use('agg')
+from multiprocessing.pool import Pool
+from functools import partial
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -72,7 +67,7 @@ DEFAULT_UNKNOWN_CLASSES = ['unknown', 'unlabeled', 'ambiguous']
 
 
 def has_overlap(set1: Iterable, set2: Iterable) -> bool:
-    """Check whether 2 sets overlap."""
+    """Check whether two sets overlap."""
     return not set(set1).isdisjoint(set(set2))
 
 
@@ -96,8 +91,15 @@ class PostProcessingOptions:
 
     ground_truth_json_file = ''
 
-    # These apply only when we're doing ground-truth comparisons
+    ## These apply only when we're doing ground-truth comparisons
+    
+    # Classes we'll treat as negative
+    #
+    # Include the token "#NO_LABELS#" to indicate that an image with no annotations
+    # should be considered empty.
     negative_classes = DEFAULT_NEGATIVE_CLASSES
+    
+    # Classes we'll treat as neither positive nor negative
     unlabeled_classes = DEFAULT_UNKNOWN_CLASSES
 
     # A list of output sets that we should count, but not render images for.
@@ -134,6 +136,8 @@ class PostProcessingOptions:
     link_images_to_originals = True
     
     # Optionally separate detections into categories (animal/vehicle/human)
+    # 
+    # Currently only supported when ground truth is unavailable
     separate_detections_by_category = True
 
     # Optionally replace one or more strings in filenames with other strings;
@@ -156,6 +160,7 @@ class PostProcessingOptions:
 
     # Control rendering parallelization
     parallelize_rendering_n_cores: Optional[int] = 100
+    parallelize_rendering_with_threads = True
     parallelize_rendering = False
     
 # ...PostProcessingOptions
@@ -237,10 +242,15 @@ def mark_detection_status(
         has_positive_labels = 0 < len(category_names - (unknown_classes | negative_classes))
         # assert has_unknown_labels is False, '{} has unknown labels'.format(annotations)
 
-        # If there are no image annotations, treat this as unknown
+        # If there are no image annotations...
         if len(categories) == 0:
-            n_unknown += 1
-            im['_detection_status'] = DetectionStatus.DS_UNKNOWN
+                        
+            if '#NO_LABELS#' in negative_classes:
+                n_negative += 1
+                im['_detection_status'] = DetectionStatus.DS_NEGATIVE
+            else:
+                n_unknown += 1
+                im['_detection_status'] = DetectionStatus.DS_UNKNOWN
 
             # n_negative += 1
             # im['_detection_status'] = DetectionStatus.DS_NEGATIVE
@@ -323,6 +333,7 @@ def render_bounding_boxes(
         display_name,
         detections,
         res,
+        ground_truth_boxes=None,
         detection_categories=None,
         classification_categories=None,
         options=None):
@@ -335,8 +346,15 @@ def render_bounding_boxes(
 
     The target image is, for example:
 
-        [options.output_dir] / ['detections' or 'non_detections'] / [filename with slashes turned into tildes]
+        [options.output_dir] / 
+        ['detections' or 'non_detections'] / 
+        [filename with slashes turned into tildes]
 
+    "res" is a result type, e.g. "detections", "non-detections"; this determines the
+    output folder for the rendered image.
+    
+    Only very preliminary support is provided for ground truth box rendering.
+    
     Returns the html info struct for this image in the form that's used for
     write_html_image_list.
     """
@@ -382,9 +400,22 @@ def render_bounding_boxes(
 
         if image is not None:
             
+            original_size = image.size
+            
             if options.viz_target_width is not None:
                 image = vis_utils.resize_image(image, options.viz_target_width)
     
+            if ground_truth_boxes is not None and len(ground_truth_boxes) > 0:
+                
+                # Create class labels like "gt_1" or "gt_27"
+                gt_classes = [0] * len(ground_truth_boxes)
+                label_map = {0:'ground truth'}
+                # for i_box,box in enumerate(ground_truth_boxes):
+                #    gt_classes.append('_' + str(box[-1]))
+                vis_utils.render_db_bounding_boxes(ground_truth_boxes, gt_classes, image,
+                                                   original_size=original_size,label_map=label_map,
+                                                   thickness=4,expansion=4)
+                
             vis_utils.render_detection_bounding_boxes(
                 detections, image,
                 label_map=detection_categories,
@@ -411,7 +442,8 @@ def render_bounding_boxes(
     info = {
         'filename': file_name,
         'title': display_name,
-        'textStyle': 'font-family:verdana,arial,calibri;font-size:80%;text-align:left;margin-top:20;margin-bottom:5'
+        'textStyle':\
+         'font-family:verdana,arial,calibri;font-size:80%;text-align:left;margin-top:20;margin-bottom:5'
     }
     
     # Optionally add links back to the original images
@@ -460,7 +492,184 @@ def prepare_html_subpages(images_html, output_dir, options=None):
 
 # ...prepare_html_subpages()
 
+# Get unique categories above the threshold for this image
+def get_positive_categories(detections,options):
+    positive_categories = set()
+    for d in detections:
+        if d['conf'] >= options.confidence_threshold:
+            positive_categories.add(d['category'])
+    return sorted(positive_categories)
 
+# Render an image (with no ground truth information)
+def render_image_no_gt(file_info,detection_categories_to_results_name,
+                       detection_categories,classification_categories,
+                       options):
+
+    image_relative_path = file_info[0]
+    max_conf = file_info[1]
+    detections = file_info[2]
+
+    detection_status = DetectionStatus.DS_UNASSIGNED
+    if max_conf >= options.confidence_threshold:
+        detection_status = DetectionStatus.DS_POSITIVE
+    else:
+        if options.include_almost_detections:
+            if max_conf >= options.almost_detection_confidence_threshold:
+                detection_status = DetectionStatus.DS_ALMOST
+            else:
+                detection_status = DetectionStatus.DS_NEGATIVE
+        else:
+            detection_status = DetectionStatus.DS_NEGATIVE
+
+    if detection_status == DetectionStatus.DS_POSITIVE:
+        if options.separate_detections_by_category:
+            positive_categories = tuple(get_positive_categories(detections,options))            
+            if positive_categories not in detection_categories_to_results_name:
+                raise ValueError('Error: {} not in category mapping (file {})'.format(
+                    str(positive_categories),image_relative_path))
+            res = detection_categories_to_results_name[positive_categories]
+        else:
+            res = 'detections'
+
+    elif detection_status == DetectionStatus.DS_NEGATIVE:
+        res = 'non_detections'
+    else:
+        assert detection_status == DetectionStatus.DS_ALMOST
+        res = 'almost_detections'
+
+    display_name = '<b>Result type</b>: {}, <b>Image</b>: {}, <b>Max conf</b>: {:0.3f}'.format(
+        res, image_relative_path, max_conf)
+
+    rendering_options = copy.copy(options)
+    if detection_status == DetectionStatus.DS_ALMOST:
+        rendering_options.confidence_threshold = \
+            rendering_options.almost_detection_confidence_threshold
+            
+    rendered_image_html_info = render_bounding_boxes(
+        image_base_dir=options.image_base_dir,
+        image_relative_path=image_relative_path,
+        display_name=display_name,
+        detections=detections,
+        res=res,
+        ground_truth_boxes=None,
+        detection_categories=detection_categories,
+        classification_categories=classification_categories,
+        options=rendering_options)
+
+    image_result = None
+
+    if len(rendered_image_html_info) > 0:
+
+        image_result = [[res, rendered_image_html_info]]
+
+        for det in detections:
+
+            if ('classifications' in det):
+
+                # This is a list of [class,confidence] pairs, sorted by confidence
+                classifications = det['classifications']
+                top1_class_id = classifications[0][0]
+                top1_class_name = classification_categories[top1_class_id]
+                top1_class_score = classifications[0][1]
+
+                # If we either don't have a confidence threshold, or we've met our
+                # confidence threshold
+                if (options.classification_confidence_threshold < 0) or \
+                    (top1_class_score >= options.classification_confidence_threshold):
+                    image_result.append(['class_{}'.format(top1_class_name),
+                                         rendered_image_html_info])
+                else:
+                    image_result.append(['class_unreliable',
+                                         rendered_image_html_info])
+
+            # ...if this detection has classification info
+
+        # ...for each detection
+
+    return image_result
+
+# ...def render_image_no_gt()
+    
+
+def render_image_with_gt(file_info,ground_truth_indexed_db,
+                         detection_categories,classification_categories,options):
+
+    image_relative_path = file_info[0]
+    max_conf = file_info[1]
+    detections = file_info[2]
+
+    # This should already have been normalized to either '/' or '\'
+
+    image_id = ground_truth_indexed_db.filename_to_id.get(image_relative_path, None)
+    if image_id is None:
+        print('Warning: couldn''t find ground truth for image {}'.format(image_relative_path))
+        return None
+
+    image = ground_truth_indexed_db.image_id_to_image[image_id]
+    annotations = ground_truth_indexed_db.image_id_to_annotations[image_id]
+
+    ground_truth_boxes = []
+    for ann in annotations:
+        if 'bbox' in ann:
+            ground_truth_box = [x for x in ann['bbox']]
+            ground_truth_box.append(ann['category_id'])
+            ground_truth_boxes.append(ground_truth_box)
+    
+    gt_status = image['_detection_status']
+
+    gt_presence = bool(gt_status)
+
+    gt_classes = CameraTrapJsonUtils.annotations_to_classnames(
+        annotations, ground_truth_indexed_db.cat_id_to_name)
+    gt_class_summary = ','.join(gt_classes)
+
+    if gt_status > DetectionStatus.DS_MAX_DEFINITIVE_VALUE:
+        print(f'Skipping image {image_id}, does not have a definitive '
+              f'ground truth status (status: {gt_status}, classes: {gt_class_summary})')
+        return None
+
+    detected = max_conf > options.confidence_threshold
+
+    if gt_presence and detected:
+        if '_classification_accuracy' not in image.keys():
+            res = 'tp'
+        elif np.isclose(1, image['_classification_accuracy']):
+            res = 'tpc'
+        else:
+            res = 'tpi'
+    elif not gt_presence and detected:
+        res = 'fp'
+    elif gt_presence and not detected:
+        res = 'fn'
+    else:
+        res = 'tn'
+
+    display_name = '<b>Result type</b>: {}, <b>Presence</b>: {}, <b>Class</b>: {}, <b>Max conf</b>: {:0.3f}%, <b>Image</b>: {}'.format(
+        res.upper(), str(gt_presence), gt_class_summary,
+        max_conf * 100, image_relative_path)
+
+    rendered_image_html_info = render_bounding_boxes(
+        image_base_dir=options.image_base_dir,
+        image_relative_path=image_relative_path,
+        display_name=display_name,
+        detections=detections,
+        res=res,
+        ground_truth_boxes=ground_truth_boxes,
+        detection_categories=detection_categories,
+        classification_categories=classification_categories,
+        options=options)
+
+    image_result = None
+    if len(rendered_image_html_info) > 0:
+        image_result = [[res, rendered_image_html_info]]
+        for gt_class in gt_classes:
+            image_result.append(['class_{}'.format(gt_class), rendered_image_html_info])
+
+    return image_result
+
+# ...def render_image_with_gt()
+
+    
 #%% Main function
 
 def process_batch_results(options: PostProcessingOptions
@@ -485,7 +694,8 @@ def process_batch_results(options: PostProcessingOptions
     if (options.ground_truth_json_file is not None) and (len(options.ground_truth_json_file) > 0):
 
         if options.separate_detections_by_category:
-            print("Warning: I don't know how to separate categories yet when doing a P/R analysis, disabling category separation")
+            print("Warning: I don't know how to separate categories yet when doing " + \
+                  "a P/R analysis, disabling category separation")
             options.separate_detections_by_category = False
 
         ground_truth_indexed_db = IndexedJsonDb(
@@ -526,7 +736,7 @@ def process_batch_results(options: PostProcessingOptions
     assert other_fields is not None
 
     detection_categories = other_fields['detection_categories']
-
+    
     # Convert keys and values to lowercase
     classification_categories = other_fields.get('classification_categories', {})
     if classification_categories is not None:
@@ -779,11 +989,13 @@ def process_batch_results(options: PostProcessingOptions
             # Build confusion matrix as array from classifier_cm
             all_class_ids = sorted(classname_to_idx.values())
             classifier_cm_array = np.array(
-                [[classifier_cm[r_idx][c_idx] for c_idx in all_class_ids] for r_idx in all_class_ids], dtype=float)
+                [[classifier_cm[r_idx][c_idx] for c_idx in all_class_ids] for \
+                 r_idx in all_class_ids], dtype=float)
             classifier_cm_array /= (classifier_cm_array.sum(axis=1, keepdims=True) + 1e-7)
 
             # Print some statistics
-            print('Finished computation of {} classification results'.format(len(classifier_accuracies)))
+            print('Finished computation of {} classification results'.format(
+                len(classifier_accuracies)))
             print('Mean accuracy: {}'.format(np.mean(classifier_accuracies)))
 
             # Prepare confusion matrix output
@@ -799,11 +1011,14 @@ def process_batch_results(options: PostProcessingOptions
 
             # Prepend class name on each line and add to the top
             cm_str_lines = [' ' * 16 + ' '.join(classname_headers)]
-            cm_str_lines += ['{:>15}'.format(cn[:15]) + ' ' + cm_line for cn, cm_line in zip(classname_list, cm_str.splitlines())]
+            cm_str_lines += ['{:>15}'.format(cn[:15]) + ' ' + cm_line for cn, cm_line in \
+                             zip(classname_list, cm_str.splitlines())]
 
             # Print formatted confusion matrix
-            print('Confusion matrix: ')
-            print(*cm_str_lines, sep='\n')
+            if False:
+                # Actually don't, this gets really messy in all but the widest consoles
+                print('Confusion matrix: ')
+                print(*cm_str_lines, sep='\n')
 
             # Plot confusion matrix
 
@@ -853,8 +1068,9 @@ def process_batch_results(options: PostProcessingOptions
         # Accumulate html image structs (in the format expected by write_html_image_lists)
         # for each category, e.g. 'tp', 'fp', ..., 'class_bird', ...
         images_html = collections.defaultdict(list)
+        
         # Add default entries by accessing them for the first time
-        [images_html[res] for res in ['tp', 'tpc', 'tpi', 'fp', 'tn', 'fn']]  # Siyu: what does this do? This line should have no effect
+        [images_html[res] for res in ['tp', 'tpc', 'tpi', 'fp', 'tn', 'fn']]
         for res in images_html.keys():
             os.makedirs(os.path.join(output_dir, res), exist_ok=True)
 
@@ -874,87 +1090,35 @@ def process_batch_results(options: PostProcessingOptions
             # Filenames should already have been normalized to either '/' or '\'
             files_to_render.append([row['file'], row['max_detection_conf'], row['detections']])
 
-        def render_image_with_gt(file_info):
-
-            image_relative_path = file_info[0]
-            max_conf = file_info[1]
-            detections = file_info[2]
-
-            # This should already have been normalized to either '/' or '\'
-
-            image_id = ground_truth_indexed_db.filename_to_id.get(image_relative_path, None)
-            if image_id is None:
-                print('Warning: couldn''t find ground truth for image {}'.format(image_relative_path))
-                return None
-
-            image = ground_truth_indexed_db.image_id_to_image[image_id]
-            annotations = ground_truth_indexed_db.image_id_to_annotations[image_id]
-
-            gt_status = image['_detection_status']
-
-            gt_presence = bool(gt_status)
-
-            gt_classes = CameraTrapJsonUtils.annotations_to_classnames(
-                annotations, ground_truth_indexed_db.cat_id_to_name)
-            gt_class_summary = ','.join(gt_classes)
-
-            if gt_status > DetectionStatus.DS_MAX_DEFINITIVE_VALUE:
-                print(f'Skipping image {image_id}, does not have a definitive '
-                      f'ground truth status (status: {gt_status}, classes: {gt_class_summary})')
-                return None
-
-            detected = max_conf > options.confidence_threshold
-
-            if gt_presence and detected:
-                if '_classification_accuracy' not in image.keys():
-                    res = 'tp'
-                elif np.isclose(1, image['_classification_accuracy']):
-                    res = 'tpc'
-                else:
-                    res = 'tpi'
-            elif not gt_presence and detected:
-                res = 'fp'
-            elif gt_presence and not detected:
-                res = 'fn'
-            else:
-                res = 'tn'
-
-            display_name = '<b>Result type</b>: {}, <b>Presence</b>: {}, <b>Class</b>: {}, <b>Max conf</b>: {:0.3f}%, <b>Image</b>: {}'.format(
-                res.upper(), str(gt_presence), gt_class_summary,
-                max_conf * 100, image_relative_path)
-
-            rendered_image_html_info = render_bounding_boxes(
-                options.image_base_dir,
-                image_relative_path,
-                display_name,
-                detections,
-                res,
-                detection_categories,
-                classification_categories,
-                options)
-
-            image_result = None
-            if len(rendered_image_html_info) > 0:
-                image_result = [[res, rendered_image_html_info]]
-                for gt_class in gt_classes:
-                    image_result.append(['class_{}'.format(gt_class), rendered_image_html_info])
-
-            return image_result
-
-        # ...def render_image_with_gt(file_info)
-
         start_time = time.time()
         if options.parallelize_rendering:
-            if options.parallelize_rendering_n_cores is None:
-                pool = ThreadPool()
+            if options.parallelize_rendering_n_cores is None:                
+                if options.parallelize_rendering_with_threads:
+                    pool = ThreadPool()
+                else:
+                    pool = Pool()
             else:
-                print('Rendering images with {} workers'.format(options.parallelize_rendering_n_cores))
-                pool = ThreadPool(options.parallelize_rendering_n_cores)
-            rendering_results = list(tqdm(pool.imap(render_image_with_gt, files_to_render), total=len(files_to_render)))
+                if options.parallelize_rendering_with_threads:
+                    pool = ThreadPool(options.parallelize_rendering_n_cores)
+                    worker_string = 'threads'
+                else:
+                    pool = Pool(options.parallelize_rendering_n_cores)
+                    worker_string = 'processes'
+                print('Rendering images with {} {}'.format(options.parallelize_rendering_n_cores,
+                                                           worker_string))
+                
+            rendering_results = list(tqdm(pool.imap(
+                partial(render_image_with_gt,
+                        ground_truth_indexed_db=ground_truth_indexed_db,
+                        detection_categories=detection_categories,
+                        classification_categories=classification_categories,
+                        options=options), 
+                files_to_render), total=len(files_to_render)))
         else:
-            # file_info = files_to_render[0]
             for file_info in tqdm(files_to_render):
-                rendering_results.append(render_image_with_gt(file_info))
+                rendering_results.append(render_image_with_gt(
+                    file_info,ground_truth_indexed_db,
+                    detection_categories,classification_categories))
         elapsed = time.time() - start_time
 
         # Map all the rendering results in the list rendering_results into the
@@ -1141,107 +1305,42 @@ def process_batch_results(options: PostProcessingOptions
                                     row['max_detection_conf'],
                                     row['detections']])
 
-        # Get unique categories above the threshold for this image
-        def get_positive_categories(detections):
-            positive_categories = set()
-            for d in detections:
-                if d['conf'] >= options.confidence_threshold:
-                    positive_categories.add(d['category'])
-            return sorted(positive_categories)
-
-        # Local function for parallelization
-        def render_image_no_gt(file_info):
-
-            image_relative_path = file_info[0]
-            max_conf = file_info[1]
-            detections = file_info[2]
-
-            detection_status = DetectionStatus.DS_UNASSIGNED
-            if max_conf >= options.confidence_threshold:
-                detection_status = DetectionStatus.DS_POSITIVE
-            else:
-                if options.include_almost_detections:
-                    if max_conf >= options.almost_detection_confidence_threshold:
-                        detection_status = DetectionStatus.DS_ALMOST
-                    else:
-                        detection_status = DetectionStatus.DS_NEGATIVE
-                else:
-                    detection_status = DetectionStatus.DS_NEGATIVE
-
-            if detection_status == DetectionStatus.DS_POSITIVE:
-                if options.separate_detections_by_category:
-                    positive_categories = tuple(get_positive_categories(detections))
-                    res = detection_categories_to_results_name[positive_categories]
-                else:
-                    res = 'detections'
-
-            elif detection_status == DetectionStatus.DS_NEGATIVE:
-                res = 'non_detections'
-            else:
-                assert detection_status == DetectionStatus.DS_ALMOST
-                res = 'almost_detections'
-
-            display_name = '<b>Result type</b>: {}, <b>Image</b>: {}, <b>Max conf</b>: {:0.3f}'.format(
-                res, image_relative_path, max_conf)
-
-            rendering_options = copy.copy(options)
-            if detection_status == DetectionStatus.DS_ALMOST:
-                rendering_options.confidence_threshold = rendering_options.almost_detection_confidence_threshold
-            rendered_image_html_info = render_bounding_boxes(
-                options.image_base_dir,
-                image_relative_path,
-                display_name,
-                detections,
-                res,
-                detection_categories,
-                classification_categories,
-                rendering_options)
-
-            image_result = None
-
-            if len(rendered_image_html_info) > 0:
-
-                image_result = [[res, rendered_image_html_info]]
-
-                for det in detections:
-
-                    if ('classifications' in det):
-
-                        # This is a list of [class,confidence] pairs, sorted by confidence
-                        classifications = det['classifications']
-                        top1_class_id = classifications[0][0]
-                        top1_class_name = classification_categories[top1_class_id]
-                        top1_class_score = classifications[0][1]
-
-                        # If we either don't have a confidence threshold, or we've met our
-                        # confidence threshold
-                        if (options.classification_confidence_threshold < 0) or \
-                            (top1_class_score >= options.classification_confidence_threshold):
-                            image_result.append(['class_{}'.format(top1_class_name),
-                                                 rendered_image_html_info])
-                        else:
-                            image_result.append(['class_unreliable',
-                                                 rendered_image_html_info])
-
-                    # ...if this detection has classification info
-
-                # ...for each detection
-
-            return image_result
-
-        # ...def render_image_no_gt(file_info):
-
         start_time = time.time()
         if options.parallelize_rendering:
-            if options.parallelize_rendering_n_cores is None:
-                pool = ThreadPool()
+            
+            if options.parallelize_rendering_n_cores is None:                
+                if options.parallelize_rendering_with_threads:
+                    pool = ThreadPool()
+                else:
+                    pool = Pool()
             else:
-                print('Rendering images with {} workers'.format(options.parallelize_rendering_n_cores))
-                pool = ThreadPool(options.parallelize_rendering_n_cores)
-            rendering_results = list(tqdm(pool.imap(render_image_no_gt, files_to_render), total=len(files_to_render)))
+                if options.parallelize_rendering_with_threads:
+                    pool = ThreadPool(options.parallelize_rendering_n_cores)
+                    worker_string = 'threads'
+                else:
+                    pool = Pool(options.parallelize_rendering_n_cores)
+                    worker_string = 'processes'
+                print('Rendering images with {} {}'.format(options.parallelize_rendering_n_cores,
+                                                           worker_string))
+                
+            # render_image_no_gt(file_info,detection_categories_to_results_name,
+            # detection_categories,classification_categories)
+
+            rendering_results = list(tqdm(pool.imap(
+                partial(render_image_no_gt, 
+                        detection_categories_to_results_name=detection_categories_to_results_name,
+                        detection_categories=detection_categories,
+                        classification_categories=classification_categories,
+                        options=options),
+                        files_to_render), total=len(files_to_render)))
         else:
             for file_info in tqdm(files_to_render):
-                rendering_results.append(render_image_no_gt(file_info))
+                rendering_results.append(render_image_no_gt(file_info,
+                                                            detection_categories_to_results_name,
+                                                            detection_categories,
+                                                            classification_categories,
+                                                            options=options))
+                
         elapsed = time.time() - start_time
 
         # Map all the rendering results in the list rendering_results into the

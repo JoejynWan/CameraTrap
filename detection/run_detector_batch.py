@@ -22,21 +22,10 @@ Has preliminary multiprocessing support for CPUs only; if a GPU is available, it
 use the GPU instead of CPUs, and the --ncores option will be ignored.  Checkpointing
 is not supported when using multiprocessing.
 
-Sample invocation:
+Does not have a command-line option to bind the process to a particular GPU, but you can 
+prepend with "CUDA_VISIBLE_DEVICES=0 ", for example, to bind to GPU 0, e.g.:
 
-# All on the 1212-image test subset
-
-CUDA_VISIBLE_DEVICES=0 python detection/run_detector_batch.py ~/models/camera_traps/megadetector/md_v4.1.0/md_v4.1.0.pb ~/data/test-small ~/tmp/mdv4test.json --output_relative_filenames --recursive # 2.52 im/s
-CUDA_VISIBLE_DEVICES=0 python detection/run_detector_batch.py ~/models/camera_traps/megadetector/md_v4.1.0/md_v4.1.0.pb ~/data/test-small ~/tmp/mdv4test.json --output_relative_filenames --recursive --use_image_queue # 3.03 im/s
-
-CUDA_VISIBLE_DEVICES=0 python detection/run_detector_batch.py ~/models/camera_traps/megadetector/camonly_mosaic_xlarge_dist_5a_last.torchscript.pt ~/data/test-small ~/tmp/mdv5test-00.json --output_relative_filenames --recursive # 5.77 im/s
-CUDA_VISIBLE_DEVICES=0 python detection/run_detector_batch.py ~/models/camera_traps/megadetector/camonly_mosaic_xlarge_dist_5a_last.torchscript.pt ~/data/test-small ~/tmp/mdv5test-01.json --output_relative_filenames --recursive --use_image_queue # 7.2 im/s
-
-CUDA_VISIBLE_DEVICES=0 python detection/run_detector_batch.py ~/models/camera_traps/megadetector/camonly_mosaic_xlarge_dist_5a_last.pt ~/data/test-small ~/tmp/mdv5test-00.json --output_relative_filenames --recursive # 6.54 im/s
-CUDA_VISIBLE_DEVICES=0 python detection/run_detector_batch.py ~/models/camera_traps/megadetector/camonly_mosaic_xlarge_dist_5a_last.pt ~/data/test-small ~/tmp/mdv5test-01.json --output_relative_filenames --recursive --use_image_queue # 8.44 im/s
-
-CUDA_VISIBLE_DEVICES=0 python run_detector_batch.py ~/models/camera_traps/megadetector/camonly_mosaic_xlarge_dist_5a_last.pt ~/data/KRU ~/tmp/mdv5test-00.json --output_relative_filenames --recursive
-CUDA_VISIBLE_DEVICES=0 python run_detector_batch.py ~/models/camera_traps/megadetector/mdv5_camonly_mosaic_xlarge_dist_5c_epoch28.pt ~/data/KRU ~/tmp/mdv5test-00.json --output_relative_filenames --recursive
+CUDA_VISIBLE_DEVICES=0 python detection/run_detector_batch.py ~/models/camera_traps/megadetector/md_v4.1.0/md_v4.1.0.pb ~/data/test-small ~/tmp/mdv4test.json --output_relative_filenames --recursive
 
 """
 
@@ -77,12 +66,12 @@ force_cpu = False
 if force_cpu:
     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
-from detection.run_detector import ImagePathUtils, is_gpu_available,\
+import detection.run_detector as run_detector
+from detection.run_detector import ImagePathUtils,\
+    is_gpu_available,\
     load_detector,\
     get_detector_version_from_filename,\
-    get_detector_metadata_from_version_string,\
-    FAILURE_INFER, FAILURE_IMAGE_OPEN,\
-    DEFAULT_OUTPUT_CONFIDENCE_THRESHOLD, DEFAULT_DETECTOR_LABEL_MAP
+    get_detector_metadata_from_version_string
 
 import visualization.visualization_utils as viz_utils
 
@@ -139,16 +128,24 @@ def consumer_func(q,return_queue,model_file,confidence_threshold,pbar,image_size
         
     results = []
     
+    n_images_processed = 0
+    
     while True:
         r = q.get()
         if r is None:
             q.task_done()
             return_queue.put(results)
             return
+        n_images_processed += 1
         im_file = r[0]
         image = r[1]
-        if verbose:
-            print('De-queued image {}'.format(im_file)); sys.stdout.flush()
+        if verbose or ((n_images_processed % 10) == 0):
+            elapsed = time.time() - start_time
+            images_per_second = n_images_processed / elapsed
+            print('De-queued image {} ({:.2f}/s) ({})'.format(n_images_processed,
+                                                          images_per_second,
+                                                          im_file));
+            sys.stdout.flush()
         results.append(process_image(im_file=im_file,detector=detector,
                                      confidence_threshold=confidence_threshold,
                                      image=image,quiet=quiet,image_size=image_size))
@@ -161,10 +158,10 @@ def consumer_func(q,return_queue,model_file,confidence_threshold,pbar,image_size
 def run_detector_with_image_queue(image_files,model_file,confidence_threshold,
                                   quiet=True,image_size=None):
     """
-    Driver function for the (optional) multiprocessing-based image queue; only used when --use_image_queue
-    is specified.  Starts a reader process to read images from disk, but processes images in the 
-    process from which this function is called (i.e., does not currently spawn a separate consumer
-    process).
+    Driver function for the (optional) multiprocessing-based image queue; only used 
+    when --use_image_queue is specified.  Starts a reader process to read images from disk, but 
+    processes images in the  process from which this function is called (i.e., does not currently
+    spawn a separate consumer process).
     """
     
     q = multiprocessing.JoinableQueue(max_queue_size)
@@ -291,7 +288,7 @@ def process_image(im_file, detector, confidence_threshold, image=None,
                 print('Image {} cannot be loaded. Exception: {}'.format(im_file, e))
             result = {
                 'file': im_file,
-                'failure': FAILURE_IMAGE_OPEN
+                'failure': run_detector.FAILURE_IMAGE_OPEN
             }
             return result
 
@@ -303,7 +300,7 @@ def process_image(im_file, detector, confidence_threshold, image=None,
             print('Image {} cannot be processed. Exception: {}'.format(im_file, e))
         result = {
             'file': im_file,
-            'failure': FAILURE_INFER
+            'failure': run_detector.FAILURE_INFER
         }
         return result
 
@@ -313,8 +310,8 @@ def process_image(im_file, detector, confidence_threshold, image=None,
 #%% Main function
 
 def load_and_run_detector_batch(model_file, image_file_names, checkpoint_path=None,
-                                confidence_threshold=DEFAULT_OUTPUT_CONFIDENCE_THRESHOLD,
-                                checkpoint_frequency=-1, results=None, n_cores=0,
+                                confidence_threshold=run_detector.DEFAULT_OUTPUT_CONFIDENCE_THRESHOLD,
+                                checkpoint_frequency=-1, results=None, n_cores=1,
                                 use_image_queue=False, quiet=False, image_size=None):
     """
     Args
@@ -331,6 +328,15 @@ def load_and_run_detector_batch(model_file, image_file_names, checkpoint_path=No
     Returns
     - results: list of dict, each dict represents detections on one image
     """
+    
+    if n_cores is None:
+        n_cores = 1
+    
+    if confidence_threshold is None:
+        confidence_threshold=run_detector.DEFAULT_OUTPUT_CONFIDENCE_THRESHOLD
+        
+    if checkpoint_frequency is None:
+        checkpoint_frequency = -1
         
     # Handle the case where image_file_names is not yet actually a list
     if isinstance(image_file_names,str):
@@ -354,7 +360,8 @@ def load_and_run_detector_batch(model_file, image_file_names, checkpoint_path=No
             print('Processing image {}'.format(image_file_names[0]))
             
         else:        
-            raise ValueError('image_file_names is a string, but is not a directory, a json list (.json), or an image file (png/jpg/jpeg/gif)')
+            raise ValueError('image_file_names is a string, but is not a directory, a json ' + \
+                             'list (.json), or an image file (png/jpg/jpeg/gif)')
     
     if results is None:
         results = []
@@ -364,11 +371,13 @@ def load_and_run_detector_batch(model_file, image_file_names, checkpoint_path=No
     print('GPU available: {}'.format(is_gpu_available(model_file)))
     
     if n_cores > 1 and is_gpu_available(model_file):
-        print('Warning: multiple cores requested, but a GPU is available; parallelization across GPUs is not currently supported, defaulting to one GPU')
+        print('Warning: multiple cores requested, but a GPU is available; parallelization across ' + \
+              'GPUs is not currently supported, defaulting to one GPU')
         n_cores = 1
 
     if n_cores > 1 and use_image_queue:
-        print('Warning: multiple cores requested, but the image queue is enabled; parallelization with the image queue is not currently supported, defaulting to one worker')
+        print('Warning: multiple cores requested, but the image queue is enabled; parallelization ' + \
+              'with the image queue is not currently supported, defaulting to one worker')
         n_cores = 1
         
     if use_image_queue:
@@ -404,7 +413,8 @@ def load_and_run_detector_batch(model_file, image_file_names, checkpoint_path=No
             # Write a checkpoint if necessary
             if checkpoint_frequency != -1 and count % checkpoint_frequency == 0:
                 
-                print('Writing a new checkpoint after having processed {} images since last restart'.format(count))
+                print('Writing a new checkpoint after having processed {} images since '
+                      'last restart'.format(count))
                 
                 assert checkpoint_path is not None                
                 
@@ -493,11 +503,12 @@ def write_results_to_file(results, output_file, relative_path_base=None,
         
         if detector_file is not None:
             
-            print('Warning (write_results_to_file): info struct and detector file supplied, ignoring detector file')
+            print('Warning (write_results_to_file): info struct and detector file ' + \
+                  'supplied, ignoring detector file')
                   
     final_output = {
         'images': results,
-        'detection_categories': DEFAULT_DETECTOR_LABEL_MAP,
+        'detection_categories': run_detector.DEFAULT_DETECTOR_LABEL_MAP,
         'info': info
     }
     with open(output_file, 'w') as f:
@@ -581,22 +592,26 @@ def main():
     parser.add_argument(
         '--use_image_queue',
         action='store_true',
-        help='Pre-load images, may help keep your GPU busy; does not currently support checkpointing.  Useful if you have a very fast GPU and a very slow disk.')
+        help='Pre-load images, may help keep your GPU busy; does not currently support ' + \
+             'checkpointing.  Useful if you have a very fast GPU and a very slow disk.')
     parser.add_argument(
         '--threshold',
         type=float,
-        default=DEFAULT_OUTPUT_CONFIDENCE_THRESHOLD,
-        help="Confidence threshold between 0 and 1.0, don't include boxes below this confidence in the output file. Default is {}".format(DEFAULT_OUTPUT_CONFIDENCE_THRESHOLD))
+        default=run_detector.DEFAULT_OUTPUT_CONFIDENCE_THRESHOLD,
+        help="Confidence threshold between 0 and 1.0, don't include boxes below this " + \
+            "confidence in the output file. Default is {}".format(
+                run_detector.DEFAULT_OUTPUT_CONFIDENCE_THRESHOLD))
     parser.add_argument(
         '--checkpoint_frequency',
         type=int,
         default=-1,
-        help='Write results to a temporary file every N images; default is -1, which disables this feature')
+        help='Write results to a temporary file every N images; default is -1, which ' + \
+             'disables this feature')
     parser.add_argument(
         '--checkpoint_path',
         type=str,
         default=None,
-        help='File name to which checkpoints will be written if checkpoint_frequency is > 0')
+        help='File name to which checkpoints will be written if checkpoint_frequency is > 0')    
     parser.add_argument(
         '--resume_from_checkpoint',
         type=str,
@@ -605,38 +620,63 @@ def main():
     parser.add_argument(
         '--allow_checkpoint_overwrite',
         action='store_true',
-        help='By default, this script will bail if the specified checkpoint file already exists; this options allows it to overwrite existing checkpoints')
+        help='By default, this script will bail if the specified checkpoint file ' + \
+              'already exists; this option allows it to overwrite existing checkpoints')
     parser.add_argument(
         '--ncores',
         type=int,
         default=0,
-        help='Number of cores to use; only applies to CPU-based inference, does not support checkpointing when ncores > 1')
-
+        help='Number of cores to use; only applies to CPU-based inference, ' + \
+             'does not support checkpointing when ncores > 1')
+    parser.add_argument(
+        '--class_mapping_filename',
+        type=str,
+        default=None,
+        help='Use a non-default class mapping, supplied in a .json file with a dictionary mapping' + \
+            'int-strings to strings.  This will also disable the addition of "1" to all category ' + \
+            'IDs, so your class mapping should start at zero.')
+    
     if len(sys.argv[1:]) == 0:
         parser.print_help()
         parser.exit()
 
     args = parser.parse_args()
 
-    assert os.path.exists(args.detector_file), 'detector file {} does not exist'.format(args.detector_file)
-    assert 0.0 < args.threshold <= 1.0, 'Confidence threshold needs to be between 0 and 1'  # Python chained comparison
+    assert os.path.exists(args.detector_file), \
+        'detector file {} does not exist'.format(args.detector_file)
+    assert 0.0 < args.threshold <= 1.0, 'Confidence threshold needs to be between 0 and 1'
     assert args.output_file.endswith('.json'), 'output_file specified needs to end with .json'
     if args.checkpoint_frequency != -1:
         assert args.checkpoint_frequency > 0, 'Checkpoint_frequency needs to be > 0 or == -1'
     if args.output_relative_filenames:
-        assert os.path.isdir(args.image_file), 'Could not find folder {}, must supply a folder when --output_relative_filenames is set'.format(args.image_file)
+        assert os.path.isdir(args.image_file), \
+            f'Could not find folder {args.image_file}, must supply a folder when ' + \
+                '--output_relative_filenames is set'
 
     if os.path.exists(args.output_file):
-        print('Warning: output_file {} already exists and will be overwritten'.format(args.output_file))
+        print('Warning: output_file {} already exists and will be overwritten'.format(
+            args.output_file))
 
+    # This is an experimental hack to allow the use of non-MD YOLOv5 models through
+    # the same infrastructure; it disables the code that enforces MDv5-like class lists.
+    if args.class_mapping_filename is not None:
+        run_detector.USE_MODEL_NATIVE_CLASSES = True
+        with open(args.class_mapping_filename,'r') as f:
+            class_mapping = json.load(f)
+        print('Loaded custom class mapping:')
+        print(class_mapping)
+        run_detector.DEFAULT_DETECTOR_LABEL_MAP = class_mapping
+        
     # Load the checkpoint if available
     #
     # Relative file names are only output at the end; all file paths in the checkpoint are
     # still full paths.
     if args.resume_from_checkpoint is not None:
-        assert os.path.exists(args.resume_from_checkpoint), 'File at resume_from_checkpoint specified does not exist'
+        assert os.path.exists(args.resume_from_checkpoint), \
+            'File at resume_from_checkpoint specified does not exist'
         with open(args.resume_from_checkpoint) as f:
-            print('Loading previous results from checkpoint file {}'.format(args.resume_from_checkpoint))
+            print('Loading previous results from checkpoint file {}'.format(
+                args.resume_from_checkpoint))
             saved = json.load(f)
         assert 'images' in saved, \
             'The checkpoint file does not have the correct fields; cannot be restored'
@@ -648,13 +688,23 @@ def main():
     # Find the images to score; images can be a directory, may need to recurse
     if os.path.isdir(args.image_file):
         image_file_names = ImagePathUtils.find_images(args.image_file, args.recursive)
-        print('{} image files found in the input directory'.format(len(image_file_names)))
+        if len(image_file_names) > 0:
+            print('{} image files found in the input directory'.format(len(image_file_names)))
+        else:
+            if (args.recursive):
+                print('No image files found in directory {}, exiting'.format(args.image_file))
+            else:
+                print('No image files found in directory {}, did you mean to specify '
+                      '--recursive?'.format(
+                    args.image_file))
+            return
         
     # A json list of image paths
     elif os.path.isfile(args.image_file) and args.image_file.endswith('.json'):
         with open(args.image_file) as f:
             image_file_names = json.load(f)
-        print('Loaded {} image filenames from list file {}'.format(len(image_file_names),args.image_file))
+        print('Loaded {} image filenames from list file {}'.format(
+            len(image_file_names),args.image_file))
         
     # A single image file
     elif os.path.isfile(args.image_file) and ImagePathUtils.is_image_file(args.image_file):
@@ -666,7 +716,8 @@ def main():
                          '(or does not have recognizable extensions).')
 
     assert len(image_file_names) > 0, 'Specified image_file does not point to valid image files'
-    assert os.path.exists(image_file_names[0]), 'The first image to be scored does not exist at {}'.format(image_file_names[0])
+    assert os.path.exists(image_file_names[0]), \
+        'The first image to be scored does not exist at {}'.format(image_file_names[0])
 
     output_dir = os.path.dirname(args.output_file)
 
@@ -681,22 +732,25 @@ def main():
         if args.checkpoint_path is not None:
             checkpoint_path = args.checkpoint_path
         else:
-            checkpoint_path = os.path.join(output_dir, 'checkpoint_{}.json'.format(datetime.utcnow().strftime("%Y%m%d%H%M%S")))
+            checkpoint_path = os.path.join(output_dir,
+                                           'checkpoint_{}.json'.format(
+                                               datetime.utcnow().strftime("%Y%m%d%H%M%S")))
         
         # Don't overwrite existing checkpoint files, this is a sure-fire way to eventually
         # erase someone's checkpoint.
-        if (checkpoint_path is not None) and (not args.allow_checkpoint_overwrite) and (args.resume_from_checkpoint is None):
+        if (checkpoint_path is not None) and (not args.allow_checkpoint_overwrite) \
+            and (args.resume_from_checkpoint is None):
             
             assert not os.path.isfile(checkpoint_path), \
-                'Checkpoint path {} already exists, delete or move it before re-using the same checkpoint path, or specify --allow_checkpoint_overwrite'.format(
-                checkpoint_path)
+                f'Checkpoint path {checkpoint_path} already exists, delete or move it before ' + \
+                're-using the same checkpoint path, or specify --allow_checkpoint_overwrite'
 
         # Commenting this out for now... the scenario where we are resuming from a checkpoint,
         # then immediately overwrite that checkpoint with empty data is higher-risk than the 
         # annoyance of crashing a few minutes after starting a job.
         if False:
-            # Confirm that we can write to the checkpoint path; this avoids issues where we crash after 
-            # several thousand images.
+            # Confirm that we can write to the checkpoint path; this avoids issues where
+            # we crash after several thousand images.
             with open(checkpoint_path, 'w') as f:
                 json.dump({'images': []}, f)
                 
@@ -720,8 +774,9 @@ def main():
                                           image_size=args.image_size)
 
     elapsed = time.time() - start_time
-    print('Finished inference for {} images in {}'.format(
-        len(results),humanfriendly.format_timespan(elapsed)))
+    images_per_second = len(results) / elapsed
+    print('Finished inference for {} images in {} ({:.2f} images per second)'.format(
+        len(results),humanfriendly.format_timespan(elapsed),images_per_second))
 
     relative_path_base = None
     if args.output_relative_filenames:

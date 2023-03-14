@@ -6,14 +6,16 @@
 4. [How fast is MegaDetector, and can I run it on my giant/small computer?](#how-fast-is-megadetector-and-can-i-run-it-on-my-giantsmall-computer)
 5. [Downloading the model](#downloading-the-model)
 6. [Using the model](#using-the-model)
-7. [Is there a GUI?](#is-there-a-gui)
-8. [How do I use the results?](#how-do-i-use-the-results)
-9. [Have you evaluated MegaDetector's accuracy?](#have-you-evaluated-megadetectors-accuracy)
-10. [Citing MegaDetector](#citing-megadetector)
-11. [Tell me more about why detectors are a good first step for camera trap images](#tell-me-more-about-why-detectors-are-a-good-first-step-for-camera-trap-images)
-12. [Pretty picture](#pretty-picture)
-13. [Mesmerizing video](#mesmerizing-video)
-14. [Can you share the training data?](#can-you-share-the-training-data)
+7. [OK, but is that how the MD devs run the model?](#ok-but-is-that-how-the-md-devs-run-the-model)
+8. [Is there a GUI?](#is-there-a-gui)
+9. [What if I just want to run non-MD scripts from this repo?](#what-if-i-just-want-to-run-non-md-scripts-from-this-repo)
+10. [How do I use the results?](#how-do-i-use-the-results)
+11. [Have you evaluated MegaDetector's accuracy?](#have-you-evaluated-megadetectors-accuracy)
+12. [Citing MegaDetector](#citing-megadetector)
+13. [Tell me more about why detectors are a good first step for camera trap images](#tell-me-more-about-why-detectors-are-a-good-first-step-for-camera-trap-images)
+14. [Pretty picture](#pretty-picture)
+15. [Mesmerizing video](#mesmerizing-video)
+16. [Can you share the training data?](#can-you-share-the-training-data)
 
 
 ## MegaDetector overview
@@ -38,17 +40,28 @@ We often run MegaDetector on behalf of users as a free service; see our ["Gettin
 
 Here are some rules of thumb to help you estimate how fast you can run MegaDetector on different types of hardware.
 
-* On a decent laptop (without a fancy deep learning GPU) that is neither the fastest nor slowest laptop you can buy in 2021, MegaDetector v4 takes somewhere between eight and twenty seconds per image, depending on how many CPUs you use.  This works out to being able to process somewhere between 4,000 and 10,000 image per day.  This might be totally fine for scenarios where you have even hundreds of thousands of images, as long as you can wait a few days.
-* On a dedicated deep learning GPU that is neither the fastest nor slowest GPU you can buy in 2021, MegaDetector v4 takes between 0.3 and 0.5 seconds per image, which works out to between 200,000 and 250,000 images per day.  We also include a few <a href="#benchmark-timings">benchmark timings</a> below on some specific GPUs.
-* MegaDetector v5 appears to consistently be around 3x-4x faster than MegaDetector v4, but it has not yet been widely benchmarked.
+* On a decent laptop (without a fancy deep learning GPU) that is neither the fastest nor slowest laptop you can buy in 2023, MegaDetector v5 can process somewhere between 25,000 and 50,000 images per day.  This might be totally fine for scenarios where you have even hundreds of thousands of images, as long as you can wait a few days.
+* On a dedicated deep learning GPU that is neither the fastest nor slowest GPU you can buy in 2023, MegaDetector v5 can process between 300,000 and 1,000,000 images per day.  We include a few <a href="#benchmark-timings">benchmark timings</a> below on some specific GPUs.
 
 We don't typically recommend running MegaDetector on embedded devices, although <a href="https://www.electromaker.io/project/view/whats-destroying-my-yard-pest-detection-with-raspberry-pi">some folks have done it</a>!  More commonly, for embedded scenarios, it probably makes sense to use MegaDetector to generate bounding boxes on lots of images from your specific ecosystem, then use those boxes to train a smaller model that fits your embedded device's compute budget.
 
 ### Benchmark timings
 
-<i>Note that these numbers are for MDv4; we haven't formally benchmarked MDv5 yet, but it's consistently 3x-4x faster than MDv4, so if you're reading this between the release of MDv5 and the next time we update this list, scale accordingly.</i>
+These results are based on a test batch of around 13,000 images from the public <a href="https://lila.science/datasets/snapshot-karoo">Snapshot Karoo</a> and <a href="http://lila.science/datasets/idaho-camera-traps/">Idaho Camera Traps</a> datasets.  These were chosen to be "typical", and anecdotally they are, though FWIW we have seen very high-resolution images that run around 30% slower than these, and very low-resolution images (typically video frames) that run around 100% faster than these.</i>
 
-With a test batch of around 13,000 images from the public <a href="https://lila.science/datasets/snapshot-karoo">Snapshot Karoo</a> and <a href="http://lila.science/datasets/idaho-camera-traps/">Idaho Camera Traps</a> datasets:
+Some of these results were measured by "team MegaDetector", and some are user-reported; YMMV.  
+  
+#### Timing results for MDv5
+
+* An <a href="https://www.nvidia.com/en-us/geforce/graphics-cards/30-series/rtx-3090-3090ti/">RTX 3090</a> processes around 11.4 images per second, or around 985,000 images per day (for MDv5)
+* An <a href="https://www.nvidia.com/en-us/geforce/graphics-cards/30-series/rtx-3080-3080ti/">RTX 3080</a> processes around 9.5 images per second, or around 820,800 images per day (for MDv5)
+* An <a href="https://www.nvidia.com/en-us/geforce/graphics-cards/30-series/rtx-3050/">RTX 3050</a> processes around 4.2 images per second, or around 363,000 images per day (for MDv5)
+* A 2020 M1 MacBook Pro (8 GPU cores) averages around 1.85 images per second, or around 160,000 images per day (for MDv5)
+* An Intel Core i7-12700 CPU (on a 2022 mid-range HP desktop) processes around 0.5 images per second on a single core (43,000 images per day) (multi-core performance is... complicated) (for MDv5)
+
+#### Timing results for MDv4
+
+FWIW, MDv5 is consistently 3x-4x faster than MDv4, so if you see a device listed here and want to estimate MDv5 performance, assume 3x-4x speedup.
 
 * An <a href="https://www.nvidia.com/en-us/data-center/v100/">NVIDIA V100</a> processes around 2.79 images per second, or around 240,000 images per day (for MDv4)
 * An <a href="https://www.nvidia.com/en-us/geforce/graphics-cards/30-series/rtx-3090/">NVIDIA RTX 3090</a> processes ~3.24 images per second, or ~280,000 images per day (for MDv4)
@@ -58,8 +71,17 @@ With a test batch of around 13,000 images from the public <a href="https://lila.
 * An <a href="https://www.nvidia.com/en-us/titan/titan-v/">NVIDIA Titan V</a> processes ~1.9 images per second, or ~167,000 images per day (for MDv4)
 * An <a href="https://www.notebookcheck.net/NVIDIA-Quadro-T2000-Laptop-Graphics-Card.423971.0.html">NVIDIA Titan Quadro T2000</a> processes ~0.64 images per second, or ~55,200 images per day (for MDv4)
 
+ #### Contributing to this benchmark list
+ 
 If you want to run this benchmark on your own, here are <a href="https://github.com/microsoft/CameraTraps/blob/master/download_megadetector_timing_benchmark_set.bat">azcopy commands</a> to download those 13,226 images, and we're happy to help you get MegaDetector running on your setup.  Or if you're using MegaDetector on other images with other GPUs, we'd love to include that data here as well.  <a href="mailto:cameratraps@lila.science">Email us</a>!
 
+### User-reported timings on other data
+
+Speed can vary widely based on image size, hard drive speed, etc., and in these numbers we're just taking what users report without asking what the deal was with the data, so... YMMV.
+
+* A GTX 1080 processed 699,530 images in 1:20:22:00 through MDv5 (4.37 images per second, or ~378,000 images per day)
+* An RTX 3050 processes ~4.6 images per second, or ~397,000 images per day through MDv5
+* An RTX 3090 processes ~11 images per second, or ~950,000 images per day through MDv5
 
 ## Who is using MegaDetector?
 
@@ -144,19 +166,9 @@ We provide two ways to apply this model to new images:
 
 2. A script for running large batches of images on a local GPU ([run_detector_batch.py](https://github.com/microsoft/CameraTraps/blob/master/detection/run_detector_batch.py))
 
-Before we add more detail, some bonus/third-party/unsupported tools for running MegaDetector:
+Also see the <a href="#is-there-a-gui">&ldquo;Is there a GUI?&rdquo;</a> section for graphical options and other ways of running MD, including real-time APIs, Docker environments, and other goodies.
 
-3. We developed a [batch processing API](https://github.com/microsoft/CameraTraps/tree/master/api/batch_processing) that runs images on many GPUs at once on Azure.  There is no public instance of this API, but the code allows you to stand up your own endpoint.  Likely only useful if you're processing millions of images in frequent, large batches.
-
-4. You can apply MegaDetector to some of your own images in Google Drive using this [Colab notebook](https://github.com/microsoft/CameraTraps/blob/master/detection/megadetector_colab.ipynb).
-
-<p style="margin-left:40px;"><a href="https://colab.research.google.com/github/microsoft/CameraTraps/blob/master/detection/megadetector_colab.ipynb"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open in Colab"/></a></p>
-
-5. [Ben Evans](https://bencevans.io/) made a [pip-installable wrapper](https://github.com/bencevans/camtrapml) for MegaDetector (and other models).
-
-Also see the <a href="#is-there-a-gui">&ldquo;Is there a GUI?&rdquo;</a> section for graphical options.
-
-The remainder of this section provides instructions for our supported scripts (options 1 and 2 above), including installing all the necessary Python dependencies.
+The remainder of this section provides instructions for running our "official" scripts, including installing all the necessary Python dependencies.
 
 ### 1. Install prerequisites: Anaconda, Git, and NVIDIA stuff
 
@@ -186,9 +198,9 @@ The instructions below will assume that you are using MDv5a; one step will be sl
 
 ### 3. Clone the relevant git repos and add them to your path, and set up your Python environment
 
-You will need the contents of three git repos to make everything work: this repo, the associated [ai4eutils](https://github.com/microsoft/ai4eutils) repo (some useful file management utilities), and - if you are running MegaDetector v5 - the [https://github.com/ultralytics/yolov5](Yolov5) repo (in fact, a specific snapshot of that repo).  You will also need to set up an Anaconda environment with all the Python packages that our code depends on.
+You will need the contents of three git repos to make everything work: this repo, the associated [ai4eutils](https://github.com/microsoft/ai4eutils) repo (some useful file management utilities), and - if you are running MegaDetector v5 - the [YOLOv5](https://github.com/ultralytics/yolov5) repo (more specifically, a fork of that repo).  You will also need to set up an Anaconda environment with all the Python packages that our code depends on.
 
-In this section, we provide Windows, Linux, and Mac instructions for doing all of this stuff.
+In this section, we provide <a href="#windows-instructions-for-gitpython-stuff">Windows</a>, <a href="#linux-instructions-for-gitpython-stuff">Linux</a>, and <a href="#mac-instructions-for-gitpython-stuff">Mac</a> instructions for doing all of this stuff.
 
 
 #### Windows instructions for git/Python stuff
@@ -198,23 +210,13 @@ The first time you set all of this up, open an Anaconda Prompt, and run:
 ```batch
 mkdir c:\git
 cd c:\git
+git clone https://github.com/ecologize/yolov5/
 git clone https://github.com/Microsoft/cameratraps
 git clone https://github.com/Microsoft/ai4eutils
 cd c:\git\cameratraps
 conda env create --file environment-detector.yml
 conda activate cameratraps-detector
 set PYTHONPATH=%PYTHONPATH%;c:\git\cameratraps;c:\git\ai4eutils;c:\git\yolov5
-
-REM ***
-REM The rest of this step is specific to MDv5; you can skip the rest of this step if you are
-REM only using MDv4.  If you're new to MegaDetector, you probably want MDv5, so you probably
-REM want to run the rest of this step.
-REM ***
-cd c:\git
-git clone https://github.com/ultralytics/yolov5/
-cd c:\git\yolov5
-git checkout c23a441c9df7ca9b1f275e8c8719c949269160d1
-cd c:\git\cameratraps
 ```
 
 If you want to use MDv4, there's one extra setup step (this will not break your MDv5 setup, you can run both in the same environment):
@@ -243,23 +245,13 @@ If you have installed Anaconda on Linux, you are probably always at an Anaconda 
 ```batch
 mkdir ~/git
 cd ~/git
+git clone https://github.com/ecologize/yolov5/
 git clone https://github.com/Microsoft/cameratraps
 git clone https://github.com/Microsoft/ai4eutils
 cd ~/git/cameratraps
 conda env create --file environment-detector.yml
 conda activate cameratraps-detector
 export PYTHONPATH="$PYTHONPATH:$HOME/git/cameratraps:$HOME/git/ai4eutils:$HOME/git/yolov5"
-
-# ***
-# The rest of this step is specific to MDv5; you can skip the rest of this step if you are
-# only using MDv4.  If you're new to MegaDetector, you probably want MDv5, so you probably
-# want to run the rest of this step.
-# ***
-cd ~/git
-git clone https://github.com/ultralytics/yolov5/
-cd ~/git/yolov5
-git checkout c23a441c9df7ca9b1f275e8c8719c949269160d1
-cd ~/git/cameratraps
 ```
 
 If you want to use MDv4, there's one extra setup step (this will not break your MDv5 setup, you can run both in the same environment):
@@ -283,29 +275,46 @@ Pro tip: rather than updating your PYTHONPATH every time you start a new shell, 
 
 #### Mac instructions for git/Python stuff
 
-These are exactly like the Linux instructions, with just one change, so we're not going to copy and paste, because if we copy and paste, there's a 100% chance the copies will drift out of sync.
+These are instructions for <i>Intel</i> Macs; see <a href="#regarding-m1-mac-support">below</a> for a note on M1 Mac support.
 
-So, on a Mac, follow the Linux instructions, but change this line:
+If you have installed Anaconda on Linux, you are probably always at an Anaconda prompt; i.e., you should see "(base)" at your command prompt.  Assuming you see that, the first time you set all of this up, and run:
 
-`conda env create --file environment-detector.yml`
+```batch
+mkdir ~/git
+cd ~/git
+git clone https://github.com/ecologize/yolov5/
+git clone https://github.com/Microsoft/cameratraps
+git clone https://github.com/Microsoft/ai4eutils
+cd ~/git/cameratraps
+conda env create --file environment-detector-mac.yml
+conda activate cameratraps-detector
+export PYTHONPATH="$PYTHONPATH:$HOME/git/cameratraps:$HOME/git/ai4eutils:$HOME/git/yolov5"
+```
 
-...to:
+If you want to use MDv4, there's one extra setup step (this will not break your MDv5 setup, you can run both in the same environment):
 
-`conda env create --file environment-detector-mac.yml`
+```batch
+conda activate cameratraps-detector
+pip install tensorflow
+```
 
-<i>Advanced information about why there is a different environment file, skip this if you don't want extra detail...</i>
+<a name="linux-new-shell"></a>
+Your environment is set up now!  In the future, whenever you start a new shell, you just need to do:
 
-The main environment file (environment-detector.yml) installs the "cudatoolkit" and "cudnn" packages; recent versions of these only exist for Windows and Linux (at least as of June 2022).  So installation using this environment file will fail on a Mac.  On the other hand, if you are on a Mac and you want to use a GPU, you'll need to manually install appropriate versions of the CUDA toolkit and CuDNN.  This is a sufficiently niche scenario that we're not going to get into details about it, but if you are having trouble with this, <a href="mailto:cameratraps@lila.science">email us</a>.
+```batch
+cd ~/git/cameratraps
+conda activate cameratraps-detector
+export PYTHONPATH="$PYTHONPATH:$HOME/git/cameratraps:$HOME/git/ai4eutils:$HOME/git/yolov5"
+```
+
+Pro tip: rather than updating your PYTHONPATH every time you start a new shell, you can add the "export" line to your .bashrc file.
+
+##### Regarding M1 Mac support
+
+M1 Macs are not officially supported right now, but with a bit of work, you can not only run MegaDetector on an M1 Mac, you can even use the M1 for accelerated inference.  Details about doing this are on <a href="https://github.com/microsoft/CameraTraps/issues/297">this issue</a>.  YMMV.
 
 
 ### 4. Hooray, we finally get to run MegaDetector!
-
-#### Reminder of what you need to do every time you start a new shell
-
-If you set up your environment in a previous session, and you're starting a fresh Anaconda shell to run MegaDetector, remember to follow the "whenever you start a new shell" instructions from the previous section (<a href="#windows-new-shell">here</a> for Windows, <a href="#linux-new-shell">here</a> for Linux/Mac).
-
-OK, now for real, let's run MegaDetector.
-
 
 #### run_detector.py
 
@@ -313,12 +322,20 @@ To test MegaDetector out on small sets of images and get super-satisfying visual
 
 The following examples assume you have an Anaconda prompt open, and have put things in the same directories we put things in the above instructions.  If you put things in different places, adjust these examples to match your folders, and most importantly, adjust these examples to point to your images.
 
-To use run_detector.py on Windows:
+To use run_detector.py on Windows, when you open a new Anaconda prompt, don't forget to do this:
 
 ```batch
 cd c:\git\CameraTraps
+conda activate cameratraps-detector
+set PYTHONPATH=%PYTHONPATH%;c:\git\cameratraps;c:\git\ai4eutils;c:\git\yolov5
+```
+
+Then you can run the script like this:
+
+```batch
 python detection\run_detector.py "c:\megadetector\md_v5a.0.0.pt" --image_file "some_image_file.jpg" --threshold 0.1
 ```
+
 Change "some_image_file.jpg" to point to a real image on your computer.
 
 If you ran this script on "some_image_file.jpg", it will produce a file called "some_image_file_detections.jpg", which - if everything worked right - has boxes on objects of interest.
@@ -327,9 +344,14 @@ If you have a GPU, and it's being utilized correctly, near the beginning of the 
 
 `GPU available: True`
 
-If you see "False" instead, your GPU environment may not be set up correctly; <a href="mailto:cameratraps@lila.science">email us</a> if you need help, or <a href="https://github.com/microsoft/CameraTraps/issues">create an issue on GitHub</a>.
+If you have an Nvidia GPU, and it's being utilized correctly, near the beginning of the output, you should see:
 
-<b>This is really just a test script, you will mostly only use this to make sure your environment is set up correctly</b>.  run_detector_batch.py (see below) is where the interesting stuff happens.
+`GPU available: True`
+
+If you have an Nvidia GPU and you see "GPU available: False", your GPU environment may not be set up correctly.  95% of the time, this is fixed by <a href="https://www.nvidia.com/en-us/geforce/drivers/">updating your Nvidia driver"</a> and rebooting.  If you have an Nvidia GPU, and you've installed the latest driver, and you've rebooted, and you're still seeing "GPU available: False", <a href="mailto:cameratraps@lila.science">email us</a>.
+
+
+<b>This is really just a test script, you will mostly only use this to make sure your environment is set up correctly</b>.  run_detector_batch.py (see <a href="#run_detector_batchpy">below</a>) is where the interesting stuff happens.
 
 You can see all the options for this script by running:
 
@@ -337,10 +359,17 @@ You can see all the options for this script by running:
 python detection\run_detector.py
 ```
 
-To use this script on Linux/Mac:
+To use this script on Linux/Mac, when you open a new Anaconda prompt, don't forget to do this:
  
 ```batch
-cd ~/git/CameraTraps
+cd ~/git/cameratraps
+conda activate cameratraps-detector
+export PYTHONPATH="$PYTHONPATH:$HOME/git/cameratraps:$HOME/git/ai4eutils:$HOME/git/yolov5"
+```
+
+Then you can run the script like this:
+
+```batch
 python detection/run_detector.py "$HOME/megadetector/md_v5a.0.0.pt" --image_file "some_image_file.jpg" --threshold 0.1
 ```
 
@@ -348,24 +377,23 @@ python detection/run_detector.py "$HOME/megadetector/md_v5a.0.0.pt" --image_file
 
 To apply this model to larger image sets on a single machine, we recommend a different script, [run_detector_batch.py](https://github.com/Microsoft/CameraTraps/blob/master/detection/run_detector_batch.py).  This outputs data in the same format as our [batch processing API](https://github.com/microsoft/CameraTraps/tree/master/api/batch_processing), so you can leverage all of our post-processing tools.  The format that this script produces is also compatible with [Timelapse](https://saul.cpsc.ucalgary.ca/timelapse/).
 
-To use run_detector_batch.py on Windows:
+To use run_detector_batch.py on Windows, when you open a new Anaconda prompt, don't forget to do this:
 
 ```batch
 cd c:\git\CameraTraps
-python detection\run_detector_batch.py "c:\megadetector\md_v5a.0.0.pt" "c:\some_image_folder" "c:\megadetector\test_output.json" --output_relative_filenames --recursive --checkpoint_frequency 10000
+conda activate cameratraps-detector
+set PYTHONPATH=%PYTHONPATH%;c:\git\cameratraps;c:\git\ai4eutils;c:\git\yolov5
+```
+
+Then you can run the script like this:
+
+```batch
+python detection\run_detector_batch.py "c:\megadetector\md_v5a.0.0.pt" "c:\some_image_folder" "c:\megadetector\test_output.json" --output_relative_filenames --recursive --checkpoint_frequency 10000 --quiet
 ```
 
 Change "c:\some_image_folder" to point to the real folder on your computer where your images live.
 
 This will produce a file called "c:\megadetector\test_output.json", which - if everything worked right - contains information about where objects of interest are in your images.  You can use that file with any of our [postprocessing](api/batch_processing/postprocessing) scripts, but most users will read this file into [Timelapse](https://saul.cpsc.ucalgary.ca/timelapse/).
-
-<b>If you are running very large batches, we strongly recommend adding the `--checkpoint_frequency` option to save checkpoints every N images</b> (you don't want to lose all the work your GPU has done if your computer crashes!).  10000 is a good value for checkpoint frequency; that will save the results every 10000 images.  This is what we've used in the example above.
-
-If you have a GPU, and it's being utilized correctly, near the beginning of the output, you should see:
-
-`GPU available: True`
-
-If you see "False" instead, your GPU environment may not be set up correctly; <a href="mailto:cameratraps@lila.science">email us</a> if you need help, or <a href="https://github.com/microsoft/CameraTraps/issues">create an issue on GitHub</a>.
 
 You can see all the options for this script by running:
 
@@ -373,14 +401,71 @@ You can see all the options for this script by running:
 python detection\run_detector_batch.py
 ```
 
-To use this script on Linux/Mac:
+#### Saving and restoring run_detector_batch.py checkpoints
+
+If you are running very large batches, we strongly recommend adding the `--checkpoint_frequency` option to save checkpoints every N images (you don't want to lose all the work your PC has done if your computer crashes!).  10000 is a good value for checkpoint frequency; that will save the results every 10000 images.  This is what we've used in the example above.  When you include this option, you'll see a line in the output that looks like this:
+
+`The checkpoint file will be written to c:\megadetector\checkpoint_20230305232323.json`
+
+The default checkpoint file will be in the same folder as your output file; in this case, because we told the script to write the final output to c:\megadetector\test_output.json, the checkpoint will be written in the c:\megadetector folder.  If everything goes smoothly, the checkpoint file will be deleted when the script finishes.  If your computer crashes/reboots/etc. while the script is running, you can pick up where you left off by running exactly the same command you ran the first time, but adding the "--resume_from_checkpoint" option, with the checkpoint file you want to resume from.  So, in this case, you would run:
 
 ```batch
-cd ~/git/CameraTraps
+python detection\run_detector_batch.py "c:\megadetector\md_v5a.0.0.pt" "c:\some_image_folder" "c:\megadetector\test_output.json" --output_relative_filenames --recursive --checkpoint_frequency 10000 --quiet --resume_from_checkpoint "c:\megadetector\checkpoint_20230305232323.json"
+```
+
+You will see something like this at the beginning of the output:
+
+`Restored 80000 entries from the checkpoint`
+
+If your computer happens to crash *while* a checkpoint is getting written... don't worry, you're still safe, but it's a bit outside the scope of this tutorial, so just <a href="mailto:cameratraps@lila.science">email us</a> in that case.
+
+
+#### If your GPU isn't recognized by run_detector_batch.py
+
+If you have an Nvidia GPU, and it's being utilized correctly, near the beginning of the output, you should see:
+
+`GPU available: True`
+
+If you have an Nvidia GPU and you see "GPU available: False", your GPU environment may not be set up correctly.  95% of the time, this is fixed by <a href="https://www.nvidia.com/en-us/geforce/drivers/">updating your Nvidia driver"</a> and rebooting.  If you have an Nvidia GPU, and you've installed the latest driver, and you've rebooted, and you're still seeing "GPU available: False", <a href="mailto:cameratraps@lila.science">email us</a>.
+
+#### Slightly modified run_detector_batch.py instructions for Linux/Mac
+
+To use this script on Linux/Mac, when you open a new Anaconda prompt, don't forget to do this:
+ 
+```batch
+cd ~/git/cameratraps
+conda activate cameratraps-detector
+export PYTHONPATH="$PYTHONPATH:$HOME/git/cameratraps:$HOME/git/ai4eutils:$HOME/git/yolov5"
+```
+
+Then you can run the script like this:
+
+```batch
 python detection/run_detector_batch.py "$HOME/megadetector/md_v5a.0.0.pt" "/some/image/folder" "$HOME/megadetector/test_output.json" --output_relative_filenames --recursive --checkpoint_frequency 10000
 ```
 
 
+## OK, but is that how the MD devs run the model?
+
+Almost... we run a lot of MegaDetector on a lot of images, and in addition to just running the main "run_detector_batch" script described in the previous section, running a large batch of images also usually includes:
+
+* Dividing images into chunks for running on multiple GPUs
+* Making sure that the number of failed/corrupted images was reasonable
+* Eliminating frequent false detections using the [repeat detection elimination](https://github.com/microsoft/CameraTraps/tree/main/api/batch_processing/postprocessing/repeat_detection_elimination) process
+* Visualizing the results using [postprocess_batch_results.py](https://github.com/microsoft/CameraTraps/blob/main/api/batch_processing/postprocessing/postprocess_batch_results.py) to make "results preview" pages like [this one](https://lila.science/public/snapshot_safari_public/snapshot-safari-kar-2022-00-00-v5a.0.0_0.200/)
+
+...and, less frequently:
+
+* Running a species classifier on the MD crops
+* Moving images into folders based on MD output
+* Various manipulation of the output files, e.g. splitting .json files into smaller .json files for subfolders
+* Running and comparing multiple versions of MegaDetector
+
+There are separate scripts to do all of these things, but things would get chaotic if we ran each of these steps separately.  So in practice we almost always run MegaDetector using [manage_local_batch.py](https://github.com/microsoft/CameraTraps/blob/main/api/batch_processing/data_preparation/manage_local_batch.py), a script broken into cells for each of those steps.  We run this in an interactive console in [Spyder](https://github.com/spyder-ide/spyder), but we also periodically export this script to a [notebook](https://github.com/microsoft/CameraTraps/blob/main/api/batch_processing/data_preparation/manage_local_batch.ipynb) that does exactly the same thing.
+
+So, if you find yourself keeping track of lots of steps like this to manage large MD jobs, try the notebook out!  And let us know if it's useful/broken/wonderful/terrible.
+
+ 
 ## Is there a GUI?
 
 Not exactly... most of our users either use our Python tools to run MegaDetector or have us run MegaDetector for them (see [this page](collaborations.md) for more information about that), then most of those users use [Timelapse](https://saul.cpsc.ucalgary.ca/timelapse/) to use their MegaDetector results in an image review workflow.
@@ -389,8 +474,10 @@ But we recognize that Python tools can be a bit daunting, so we're excited that 
 
 ### Tools for running MegaDetector locally
 
-* [EcoAssist](https://github.com/PetervanLunteren/EcoAssist) is a GUI-based tool for running MegaDetector in MacOS environments (supports MDv5)
+* [EcoAssist](https://github.com/PetervanLunteren/EcoAssist) is a GUI-based tool for running MegaDetector (supports MDv5) and running some postprocessing functions (e.g. folder separation)
+* [CamTrap Detector](https://github.com/bencevans/camtrap-detector) is a GUI-based tool for running MegaDetector (supports MDv5)
 * [MegaDetector-GUI](https://github.com/petargyurov/megadetector-gui) is a GUI-based tool for running MegaDetector in Windows environments (MDv4 only as far as we know)
+
 
 ### Interactive demos/APIs
 
@@ -413,7 +500,82 @@ It's not quite as simple as "these platforms all run MegaDetector on your images
 
 ### Other ways of running MegaDetector that don't fit easily into one of those categories
 
+#### Third-party, YMMV
+
 * [FastAPI/Streamlit package for serving MD and visualizing results](https://github.com/abhayolo/megadetector-fastapi)
+* [SpSeg](https://github.com/bhlab/SpSeg/) (pipeline for running MD along with a custom classifier)
+* [MegaDetectorLite](https://github.com/timmh/MegaDetectorLite) is a set of scripts to convert MDv5 into ONNX and TensorRT formats for embedded deployments.
+* [Docker environment](https://github.com/zaandahl/megadetector) for running MDv5
+* [pip-installable wrapper](https://github.com/bencevans/camtrapml) for MegaDetector (and other camera-trap-related models)
+* [Kaggle notebook](https://www.kaggle.com/code/evmans/train-megadetector-tutorial) for fine-tuning MegaDetector to add additional classes
+
+#### Maintained within this repo
+
+* [Batch processing API](https://github.com/microsoft/CameraTraps/tree/master/api/batch_processing) that runs images on many GPUs at once on Azure.  There is no public instance of this API, but the code allows you to stand up your own endpoint.
+* [Colab notebook](https://github.com/microsoft/CameraTraps/blob/master/detection/megadetector_colab.ipynb) ([open in Colab](https://colab.research.google.com/github/microsoft/CameraTraps/blob/master/detection/megadetector_colab.ipynb)) for running MDv5 on images stored in Google Drive.
+* [Real-time MegaDetector API using Flask](https://github.com/microsoft/CameraTraps/tree/main/api/synchronous).  This is deployed via Docker, so the Dockerfile provided for the real-time may be a good starting point for other Docker-based MegaDetector deployments as well.
+ 
+
+## What if I just want to run non-MD scripts from this repo?
+
+If you want to run scripts from this repo, but you won't actually be running MegaDetector, you can install a lighter-weight version of the same environment by doing the following:
+
+1. Install [Anaconda](https://www.anaconda.com/products/individual).  Anaconda is an environment for installing and running Python stuff.
+2. Install git. If you're not familiar with git, we recommend installing git from git-scm ([Windows link](https://git-scm.com/download/win)) ([Mac link](https://git-scm.com/book/en/v2/Getting-Started-Installing-Git)).
+
+The remaining steps will assume you are running at an Anaconda prompt.  You will know you are at an Anaconda prompt (as opposed to run-of-the-mill command prompt) if you see an environment name in parentheses before your current directory, like this:
+
+<img src="images/anaconda-prompt-base.jpg" style="margin-left:25px;">
+
+...or this:
+
+<img src="images/anaconda-prompt-ct.jpg" style="margin-left:25px;">
+
+On Windows, when you install Anaconda, you will actually get two different Anaconda command prompts; in your start menu, they will be called "Anaconda Prompt (anaconda3)" and "Anaconda Powershell Prompt (anaconda3)".  These instructions assume you are using the "regular" Anaconda prompt, <b>not</b> the Powershell prompt.
+
+3. In an Anaconda prompt, run the following to create your environment (on Windows):
+
+```batch
+mkdir c:\git
+cd c:\git
+git clone https://github.com/Microsoft/cameratraps
+git clone https://github.com/Microsoft/ai4eutils
+cd c:\git\cameratraps
+conda env create --file environment.yml
+conda activate cameratraps-detector
+set PYTHONPATH=%PYTHONPATH%;c:\git\cameratraps;c:\git\ai4eutils
+```
+
+...or the following (on MacOS):
+
+```batch
+mkdir ~/git
+cd ~/git
+git clone https://github.com/Microsoft/cameratraps
+git clone https://github.com/Microsoft/ai4eutils
+cd ~/git/cameratraps
+conda env create --file environment-detector-mac.yml
+conda activate cameratraps-detector
+export PYTHONPATH="$PYTHONPATH:$HOME/git/cameratraps:$HOME/git/ai4eutils"
+```
+
+4. Whenever you want to start this environment again, run the following (on Windows):
+
+```batch
+cd c:\git\cameratraps
+conda activate cameratraps-detector
+set PYTHONPATH=%PYTHONPATH%;c:\git\cameratraps;c:\git\ai4eutils
+```
+
+...or the following (on MacOS):
+
+```batch
+cd ~/git/cameratraps
+conda activate cameratraps-detector
+export PYTHONPATH="$PYTHONPATH:$HOME/git/cameratraps:$HOME/git/ai4eutils"
+```
+
+Also, the environment file we use here ([environment.yml](environment.yml)) doesn't get quite the same level of TLC that our MegaDetector environment does, so if anyone tries to run scripts that don't directly involve MegaDetector using this environment, and packages are missing, [let us know](mailto:cameratraps@lila.science).
 
 ## How do I use the results?
 

@@ -5,9 +5,9 @@ channels:
   - pytorch
 
 dependencies:
+  - nomkl
   - python=3.8
-  # We pin Pillow to make it as likely as possible that images are loaded via a loader that's identical to the training environment
-  - Pillow=9.1.0 
+  - Pillow=9.1.0
   - nb_conda_kernels
   - ipykernel
   - tqdm
@@ -29,8 +29,8 @@ dependencies:
   - PyYAML>=5.3.1
   - pytorch::pytorch=1.10.1
   - pytorch::torchvision=0.11.2
-  - conda-forge::cudatoolkit=11.3
-  - conda-forge::cudnn=8.1
+  # - conda-forge::cudatoolkit=11.3
+  # - conda-forge::cudnn=8.1
 
 # the `nb_conda_kernels` and `ipykernel` packages are installed so that we
 # can use Jupyter Notebooks with this environment as a kernel

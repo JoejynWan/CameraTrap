@@ -20,7 +20,7 @@ from visualization import visualize_detector_output
 from ct_utils import args_to_object
 from detection.video_utils import video_to_frames
 from detection.video_utils import frames_to_video
-from detection.video_utils import frame_results_to_video_results
+from detection.video_utils import frame_results_to_video_results,FrameToVideoOptions
 from detection.video_utils import video_folder_to_frames
 from uuid import uuid1
 
@@ -39,9 +39,10 @@ class ProcessVideoOptions:
     keep_output_frames = False
     reuse_results_if_available = False
     recursive = False 
+    verbose = False
 
     rendering_confidence_threshold = 0.8
-    json_confidence_threshold = 0.0
+    json_confidence_threshold = 0.005
     frame_sample = None
     
     n_cores = 1
@@ -112,14 +113,18 @@ def process_video(options):
         if not options.keep_output_frames:
             try:
                 shutil.rmtree(rendering_output_dir)
-            except Exception:
+            except Exception as e:
+                print('Warning: error deleting rendered detection folder {}:\n{}'.format(
+                    rendering_output_dir,str(e)))
                 pass
         
     # (Optionally) delete the frames on which we ran MegaDetector
     if not options.keep_output_frames:
         try:
             shutil.rmtree(frame_output_folder)
-        except Exception:
+        except Exception as e:
+            print('Warning: error deleting frame folder {}:\n{}'.format(
+                frame_output_folder,str(e)))
             pass
         
     return results
@@ -129,12 +134,14 @@ def process_video_folder(options):
     
     ## Validate options
 
-    assert not options.render_output_video, 'Video rendering is not supported when rendering a folder'
+    assert not options.render_output_video, \
+        'Video rendering is not supported when rendering a folder'
 
     
     ## Split every video into frames
     
-    assert os.path.isdir(options.input_video_file),'{} is not a folder'.format(options.input_video_file)
+    assert os.path.isdir(options.input_video_file), \
+        '{} is not a folder'.format(options.input_video_file)
                 
     if options.frame_folder is not None:
         frame_output_folder = options.frame_folder
@@ -144,11 +151,23 @@ def process_video_folder(options):
             tempdir, os.path.basename(options.input_video_file) + '_frames_' + str(uuid1()))
     os.makedirs(frame_output_folder, exist_ok=True)
 
-    frame_filenames, Fs = video_folder_to_frames(input_folder=options.input_video_file, output_folder_base=frame_output_folder, 
+    print('Extracting frames')
+    frame_filenames, Fs, video_filenames = \
+        video_folder_to_frames(input_folder=options.input_video_file,
+                               output_folder_base=frame_output_folder, 
                                recursive=options.recursive, overwrite=True,
-                               n_threads=options.n_cores,every_n_frames=options.frame_sample)
+                               n_threads=options.n_cores,every_n_frames=options.frame_sample,
+                               verbose=options.verbose)
     
     image_file_names = list(itertools.chain.from_iterable(frame_filenames))
+    
+    if len(image_file_names) == 0:
+        if len(video_filenames) == 0:
+            print('No videos found in folder {}'.format(options.input_video_file))
+        else:
+            print('No frames extracted from folder {}, this may be due to an '\
+                  'unsupported video codec'.format(options.input_video_file))
+        return
 
     if options.debug_max_frames is not None and options.debug_max_frames > 0:
         image_file_names = image_file_names[0:options.debug_max_frames]
@@ -166,83 +185,119 @@ def process_video_folder(options):
         else:
             video_json = options.output_json_file
             frames_json = video_json + '_frames'
-            
+
     if options.reuse_results_if_available and \
         os.path.isfile(frames_json):
             print('Loading results from {}'.format(frames_json))
             results = None
     else:
+        print('Running MegaDetector')
         results = run_detector_batch.load_and_run_detector_batch(
             options.model_file, image_file_names,
             confidence_threshold=options.json_confidence_threshold,
-            n_cores=options.n_cores)
+            n_cores=options.n_cores,
+            quiet=(not options.verbose))
     
         run_detector_batch.write_results_to_file(
             results, frames_json,
-            relative_path_base=frame_output_folder)
+            relative_path_base=frame_output_folder,
+            detector_file=options.model_file)
     
     
+    ## (Optionally) delete the frames on which we ran MegaDetector
+    
+    if not options.keep_output_frames:
+        try:
+            print('Deleting frame cache')
+            shutil.rmtree(frame_output_folder)
+        except Exception as e:
+            print('Warning: error deleting frame folder {}:\n{}'.format(
+                frame_output_folder,str(e)))
+            pass
+    
+
     ## Convert frame-level results to video-level results
 
+    print('Converting frame-level results to video-level results')
     frame_results_to_video_results(frames_json,video_json)
-         
-        
+
+
 #%% Interactive driver
 
 
 if False:
 
+    #%% Just test frame <--> video .json conversion
+
+    options = FrameToVideoOptions()
+    input_file = os.path.expanduser('~/tmp/tmp.frames.json')
+    output_file = os.path.expanduser('~/tmp/tmp.json')
+    frame_results_to_video_results(input_file,output_file,options)
+    
+    
     #%% Process a folder of videos
     
-    model_file = r'g:\temp\models\md_v4.1.0.pb'
-    input_dir = r'g:\temp\100MEDIA_mp4'
-    frame_folder = r'g:\temp\frames'
+    model_file = os.path.expanduser('~/models/camera_traps/megadetector/md_v5.0.0/md_v5a.0.0.pt')
+    input_dir = os.path.expanduser('~/data/test-video')
+    frame_folder = os.path.expanduser('~/data/test-video-frames')
     
     print('Processing folder {}'.format(input_dir))
     
     options = ProcessVideoOptions()
-    options.reuse_results_if_available = True
+    
     options.model_file = model_file
     options.input_video_file = input_dir
+    options.frame_folder = frame_folder
+    
+    options.verbose = False
+    options.render_output_video = True
+    options.keep_output_frames = False
+    options.recursive = True
+    
+    options.reuse_results_if_available = False
+    
     options.output_video_file = None
     options.output_json_file = None
-    options.frame_folder = frame_folder
-    options.render_output_video = False
-    options.n_cores = 5
-    options.json_confidence_threshold = 0.55
-    options.delete_output_frames = False
-    options.recursive = True
+    options.n_cores = None
+    options.rendering_confidence_threshold = None
+    options.json_confidence_threshold = 0
     options.debug_max_frames = None
-    options.frame_sample = 10
+    options.frame_sample = None
     
-    # process_video_folder(options)
+    process_video_folder(options)
     
     cmd = 'python process_video.py'
     cmd += ' "' + model_file + '"'
     cmd += ' "' + input_dir + '"'
+    
     if options.recursive:
         cmd += ' --recursive'
-    if options.frame_folder is not None:
-        cmd += ' --frame_folder' + ' "' + options.frame_folder + '"'
     if options.render_output_video:
         cmd += ' --render_output_video'
-    if options.delete_output_frames:
-        cmd += ' --delete_output_frames'
-    cmd += ' --rendering_confidence_threshold ' + str(options.rendering_confidence_threshold)
-    cmd += ' --json_confidence_threshold ' + str(options.json_confidence_threshold)
-    cmd += ' --n_cores ' + str(options.n_cores)
+    if options.keep_output_frames:
+        cmd += ' --keep_output_frames'
+    
+    if options.frame_folder is not None:
+        cmd += ' --frame_folder' + ' "' + options.frame_folder + '"'
+    if options.rendering_confidence_threshold is not None:
+        cmd += ' --rendering_confidence_threshold ' + str(options.rendering_confidence_threshold)
+    if options.json_confidence_threshold is not None:
+        cmd += ' --json_confidence_threshold ' + str(options.json_confidence_threshold)
+    if options.n_cores is not None:
+        cmd += ' --n_cores ' + str(options.n_cores)
     if options.frame_sample is not None:
         cmd += ' --frame_sample ' + str(options.frame_sample)
     if options.debug_max_frames is not None:
         cmd += ' --debug_max_frames ' + str(options.debug_max_frames)
 
+    print(cmd)
     # import clipboard; clipboard.copy(cmd)
 
     
     #%% Process a single video
 
-    model_file = r'c:\temp\models\md_v4.0.0.pb'
-    input_video_file = r'C:\temp\LIFT0003.MP4'
+    model_file = os.path.expanduser('~/models/camera_traps/megadetector/md_v5.0.0/md_v5a.0.0.pt')    
+    input_video_file = os.path.expanduser('~/data/test-video/IMG_0420.AVI')
 
     options = ProcessVideoOptions()
     options.model_file = model_file
@@ -250,12 +305,9 @@ if False:
     options.debug_max_frames = 10
 
     process_video(options)
-
     
-    # python process_video.py "c:\temp\models\md_v4.0.0.pb" "c:\temp\LIFT0003.MP4" --debug_max_frames=10 --render_output_video=True
 
-
-    #%% For a video that's already been run through MD
+    #%% Aggregate results and render output video for a video that's already been run through MD
     
     import json
     video_file = os.path.expanduser('~/1_fps_20211216_101100.mp4')
@@ -286,7 +338,9 @@ if False:
                 if 'bbox' in det:
                     bbox = det['bbox']
                     det_size = bbox[2] * bbox[3]
-                if det['category'] in allowed_categories and ((det_size is not None) and (det_size < max_box_size) and (det_size > min_box_size)):
+                if det['category'] in allowed_categories and \
+                    ((det_size is not None) and (det_size < max_box_size) and \
+                     (det_size > min_box_size)):
                     if det['conf'] > max_detection_conf:
                         max_detection_conf = det['conf']
                     if det['conf'] < min_valid_confidence:
@@ -299,7 +353,8 @@ if False:
             im['detections'] = valid_detections
             im['max_detection_conf'] = max_detection_conf
             
-        print('Kept {} of {} detections (min conf {})'.format(n_valid_detections,n_detections,min_valid_confidence))
+        print('Kept {} of {} detections (min conf {})'.format(
+            n_valid_detections,n_detections,min_valid_confidence))
         
         with open(results_file,'w') as f:
             json.dump(d,f,indent=2)
@@ -311,7 +366,7 @@ if False:
     os.makedirs(base_dir,exist_ok=True)
     
     
-    # Split into frames
+    ## Split into frames
     
     options = ProcessVideoOptions()
     options.input_video_file = video_file
@@ -328,9 +383,9 @@ if False:
         frame_filenames, Fs = video_to_frames(
             options.input_video_file, frame_output_folder)
             
-    # Render output video
+    ## Render output video
     
-    ## Render detections to images
+    ### Render detections to images
     
     rendering_output_dir = os.path.join(
         base_dir, os.path.basename(options.input_video_file) + '_detections')
@@ -341,7 +396,7 @@ if False:
         images_dir=frame_output_folder,
         confidence=min_confidence)
 
-    ## Combine into a video
+    ### Combine into a video
     
     Fs = 20
     frames_to_video(detected_frame_files, Fs, options.output_video_file)
@@ -351,7 +406,9 @@ if False:
 
 def main():
 
-    parser = argparse.ArgumentParser(description=('Run MegaDetector on each frame in a video (or every Nth frame), optionally producing a new video with detections annotated'))
+    parser = argparse.ArgumentParser(description=(
+        'Run MegaDetector on each frame in a video (or every Nth frame), optionally '\
+        'producing a new video with detections annotated'))
 
     parser.add_argument('model_file', type=str,
                         help='MegaDetector model file')
@@ -360,40 +417,49 @@ def main():
                         help='video file (or folder) to process')
 
     parser.add_argument('--recursive', action='store_true',
-                        help='recurse into [input_video_file]; only meaningful if a folder is specified as input')
+                        help='recurse into [input_video_file]; only meaningful if a folder '\
+                         'is specified as input')
     
     parser.add_argument('--frame_folder', type=str, default=None,
-                        help='folder to use for intermediate frame storage, defaults to a folder in the system temporary folder')
+                        help='folder to use for intermediate frame storage, defaults to a folder '\
+                        'in the system temporary folder')
                         
     parser.add_argument('--rendering_folder', type=str, default=None,
-                        help='folder to use for renderred frame storage, defaults to a folder in the system temporary folder')
+                        help='folder to use for renderred frame storage, defaults to a folder in '\
+                        'the system temporary folder')
     
     parser.add_argument('--output_json_file', type=str,
                         default=None, help='.json output file, defaults to [video file].json')
 
     parser.add_argument('--output_video_file', type=str,
-                        default=None, help='video output file (or folder), defaults to [video file].mp4 for files, or [video file]_annotated] for folders')
+                        default=None, help='video output file (or folder), defaults to '\
+                            '[video file].mp4 for files, or [video file]_annotated] for folders')
 
     parser.add_argument('--render_output_video', action='store_true',
                         help='enable video output rendering (not rendered by default)')
 
     parser.add_argument('--keep_output_frames',
-                       action='store_true', help='Disable the deletion of intermediate images (pre- and post-detection rendered frames)')
+                       action='store_true', help='Disable the deletion of intermediate images '\
+                           '(pre- and post-detection rendered frames)')
 
     parser.add_argument('--rendering_confidence_threshold', type=float,
                         default=0.8, help="don't render boxes with confidence below this threshold")
 
     parser.add_argument('--json_confidence_threshold', type=float,
-                        default=0.0, help="don't include boxes in the .json file with confidence below this threshold")
+                        default=0.0, help="don't include boxes in the .json file with confidence '\
+                            'below this threshold")
 
     parser.add_argument('--n_cores', type=int,
-                        default=1, help='number of cores to use for detection (CPU only)')
+                        default=1, help='number of cores to use for frame separation and detection. '\
+                            'If using a GPU, this option will be respected for frame separation but '\
+                            'ignored for detection')
 
     parser.add_argument('--frame_sample', type=int,
                         default=None, help='procss every Nth frame (defaults to every frame)')
 
     parser.add_argument('--debug_max_frames', type=int,
-                        default=-1, help='trim to N frames for debugging (impacts model execution, not frame rendering)')
+                        default=-1, help='trim to N frames for debugging (impacts model execution, '\
+                            'not frame rendering)')
 
     args = parser.parse_args()
     options = ProcessVideoOptions()

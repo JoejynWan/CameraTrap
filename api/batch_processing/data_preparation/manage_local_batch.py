@@ -21,6 +21,7 @@ from tqdm import tqdm
 # from ai4eutils
 import ai4e_azure_utils 
 import path_utils
+from ct_utils import is_list_sorted
 
 from detection.run_detector_batch import load_and_run_detector_batch, write_results_to_file
 from detection.run_detector import DEFAULT_OUTPUT_CONFIDENCE_THRESHOLD
@@ -37,8 +38,6 @@ json_threshold = None
 # Turn warnings into errors if more than this many images are missing
 max_tolerable_failed_images = 100
 
-n_rendering_threads = 50
-
 use_image_queue = False
 
 # Only relevant when we're using a single GPU
@@ -52,14 +51,26 @@ image_size = None
 # Only relevant when running on CPU
 ncores = 1
 
+# OS-specific script line continuation character
+slcc = '\\'
+
+# OS-specific script comment character
+scc = '#' 
+
+script_extension = '.sh'
+
+if os.name == 'nt':
+    slcc = '^'
+    scc = 'REM'
+    script_extension = '.bat'
+
 
 #%% Constants I set per script
 
-input_path = os.path.expanduser('~/data/organization/2021-12-24')
+input_path = '/datadrive/organization/data'
 
 organization_name_short = 'organization'
-# job_date = '2022-01-01'
-job_date = None
+job_date = None # '2022-12-02'
 assert job_date is not None and organization_name_short != 'organization'
 
 # Optional descriptor
@@ -115,6 +126,24 @@ all_images = path_utils.find_images(input_path,recursive=True)
 
 print('Enumerated {} image files in {}'.format(len(all_images),input_path))
 
+if False:
+
+    pass 
+    
+    #%% Load files from prior enumeration
+    
+    import re    
+    chunk_files = os.listdir(filename_base)
+    pattern = re.compile('chunk\d+.json')
+    chunk_files = [fn for fn in chunk_files if pattern.match(fn)]
+    all_images = []
+    for fn in chunk_files:
+        with open(os.path.join(filename_base,fn),'r') as f:
+            chunk = json.load(f)
+            assert isinstance(chunk,list)
+            all_images.extend(chunk)
+    print('Loaded {} image files from chunks in {}'.format(len(all_images),filename_base))
+    
 
 #%% Divide images into chunks 
 
@@ -162,7 +191,10 @@ for i_task,task in enumerate(task_info):
     else:
         gpu_number = default_gpu_number
         
-    cuda_string = f'CUDA_VISIBLE_DEVICES={gpu_number}'
+    if os.name == 'nt':
+        cuda_string = f'set CUDA_VISIBLE_DEVICES={gpu_number} & '
+    else:
+        cuda_string = f'CUDA_VISIBLE_DEVICES={gpu_number} '
     
     checkpoint_frequency_string = ''
     checkpoint_path_string = ''
@@ -192,8 +224,8 @@ for i_task,task in enumerate(task_info):
         
     cmd = f'{cuda_string} python run_detector_batch.py "{model_file}" "{chunk_file}" "{output_fn}" {checkpoint_frequency_string} {checkpoint_path_string} {use_image_queue_string} {ncores_string} {quiet_string} {image_size_string}'
     
-    cmd_file = os.path.join(filename_base,'run_chunk_{}_gpu_{}.sh'.format(str(i_task).zfill(2),
-                            str(gpu_number).zfill(2)))
+    cmd_file = os.path.join(filename_base,'run_chunk_{}_gpu_{}{}'.format(str(i_task).zfill(2),
+                            str(gpu_number).zfill(2),script_extension))
     
     with open(cmd_file,'w') as f:
         f.write(cmd + '\n')
@@ -208,8 +240,8 @@ for i_task,task in enumerate(task_info):
     
     resume_string = ' --resume_from_checkpoint "{}"'.format(checkpoint_filename)
     resume_cmd = cmd + resume_string
-    resume_cmd_file = os.path.join(filename_base,'resume_chunk_{}_gpu_{}.sh'.format(str(i_task).zfill(2),
-                            str(gpu_number).zfill(2)))
+    resume_cmd_file = os.path.join(filename_base,'resume_chunk_{}_gpu_{}{}'.format(str(i_task).zfill(2),
+                            str(gpu_number).zfill(2),script_extension))
     
     with open(resume_cmd_file,'w') as f:
         f.write(resume_cmd + '\n')
@@ -355,8 +387,8 @@ assert len(combined_results['images']) == len(set(result_filenames))
 
 # im = combined_results['images'][0]
 for im in combined_results['images']:
-    assert im['file'].startswith(input_path + '/')
-    im['file']= im['file'].replace(input_path + '/','',1)    
+    assert im['file'].startswith(input_path + os.path.sep)
+    im['file']= im['file'].replace(input_path + os.path.sep,'',1)    
     
 combined_api_output_file = os.path.join(
     combined_api_output_folder,
@@ -368,73 +400,23 @@ with open(combined_api_output_file,'w') as f:
 print('Wrote results to {}'.format(combined_api_output_file))
 
 
-#%% Compare results files for different model versions (or before/after RDE)
-
-import itertools
-
-from api.batch_processing.postprocessing.compare_batch_results import (
-    BatchComparisonOptions,PairwiseBatchComparisonOptions,compare_batch_results)
-
-options = BatchComparisonOptions()
-
-options.job_name = organization_name_short
-options.output_folder = os.path.join(postprocessing_output_folder,'model_comparison')
-options.image_folder = input_path
-
-options.pairwise_options = []
-
-filenames = [
-    '/postprocessing/organization/mdv4_results.json',
-    '/postprocessing/organization/mdv5a_results.json',
-    '/postprocessing/organization/mdv5b_results.json'    
-    ]
-
-detection_thresholds = [0.7,0.15,0.15]
-
-assert len(detection_thresholds) == len(filenames)
-
-rendering_thresholds = [(x*0.6666) for x in detection_thresholds]
-
-# Choose all pairwise combinations of the files in [filenames]
-for i, j in itertools.combinations(list(range(0,len(filenames))),2):
-        
-    pairwise_options = PairwiseBatchComparisonOptions()
-    
-    pairwise_options.results_filename_a = filenames[i]
-    pairwise_options.results_filename_b = filenames[j]
-    
-    pairwise_options.rendering_confidence_threshold_a = rendering_thresholds[i]
-    pairwise_options.rendering_confidence_threshold_b = rendering_thresholds[j]
-    
-    pairwise_options.detection_thresholds_a = {'animal':detection_thresholds[i],
-                                               'person':detection_thresholds[i],
-                                               'vehicle':detection_thresholds[i]}
-    pairwise_options.detection_thresholds_b = {'animal':detection_thresholds[j],
-                                               'person':detection_thresholds[j],
-                                               'vehicle':detection_thresholds[j]}
-    options.pairwise_options.append(pairwise_options)
-
-results = compare_batch_results(options)
-
-from path_utils import open_file # from ai4eutils
-open_file(results.html_output_file)
-
-
 #%% Post-processing (no ground truth)
 
 render_animals_only = False
 
 options = PostProcessingOptions()
 options.image_base_dir = input_path
-options.parallelize_rendering = True
 options.include_almost_detections = True
 options.num_images_to_sample = 7500
-options.parallelize_rendering_n_cores = n_rendering_threads
 options.confidence_threshold = 0.2
 options.almost_detection_confidence_threshold = options.confidence_threshold - 0.05
 options.ground_truth_json_file = None
 options.separate_detections_by_category = True
 # options.sample_seed = 0
+
+options.parallelize_rendering = True
+options.parallelize_rendering_n_cores = 50
+options.parallelize_rendering_with_threads = False
 
 if render_animals_only:
     # Omit some pages from the output, useful when animals are rare
@@ -454,24 +436,6 @@ options.output_dir = output_base
 ppresults = process_batch_results(options)
 html_output_file = ppresults.output_html_file
 path_utils.open_file(html_output_file)
-
-
-#%% Merge in high-confidence detections from another results file
-
-from api.batch_processing.postprocessing.merge_detections import MergeDetectionsOptions,merge_detections
-
-source_files = ['']
-target_file = ''
-output_file = target_file.replace('.json','_merged.json')
-
-options = MergeDetectionsOptions()
-options.max_detection_size = 1.0
-options.target_confidence_threshold = 0.25
-options.categories_to_include = [1]
-options.source_confidence_thresholds = [0.2]
-merge_detections(source_files, target_file, output_file, options)
-
-merged_detections_file = output_file
 
 
 #%% RDE (sample directory collapsing)
@@ -503,8 +467,18 @@ if False:
     with open(combined_api_output_file,'r') as f:
         d = json.load(f)
     image_filenames = [im['file'] for im in d['images']]
+    
+    #%%
+    
+    dirNames = set()
+    
+    # relativePath = image_filenames[0]
     for relativePath in tqdm(image_filenames):
-        remove_overflow_folders(relativePath)
+        dirName = remove_overflow_folders(relativePath)
+        dirNames.add(dirName)
+        
+    dirNames = list(dirNames)
+    dirNames.sort()
 
 
 #%% Repeat detection elimination, phase 1
@@ -520,9 +494,12 @@ options = repeat_detections_core.RepeatDetectionOptions()
 options.confidenceMin = 0.15
 options.confidenceMax = 1.01
 options.iouThreshold = 0.85
-options.occurrenceThreshold = 10
+options.occurrenceThreshold = 20
 options.maxSuspiciousDetectionSize = 0.2
 # options.minSuspiciousDetectionSize = 0.05
+
+options.parallelizationUsesThreads = False
+options.nWorkers = 20
 
 # This will cause a very light gray box to get drawn around all the detections
 # we're *not* considering as suspicious.
@@ -541,7 +518,7 @@ rde_string = 'rde_{:.2f}_{:.2f}_{}_{:.2f}'.format(
     options.confidenceMin, options.iouThreshold,
     options.occurrenceThreshold, options.maxSuspiciousDetectionSize)
 options.outputBase = os.path.join(filename_base, rde_string + '_task_{}'.format(task_index))
-options.filenameReplacements = {'':''}
+options.filenameReplacements = None # {'':''}
 
 # Exclude people and vehicles from RDE
 # options.excludeClasses = [2,3]
@@ -590,7 +567,6 @@ render_animals_only = False
 
 options = PostProcessingOptions()
 options.image_base_dir = input_path
-options.parallelize_rendering = True
 options.include_almost_detections = True
 options.num_images_to_sample = 7500
 options.confidence_threshold = 0.2
@@ -598,6 +574,10 @@ options.almost_detection_confidence_threshold = options.confidence_threshold - 0
 options.ground_truth_json_file = None
 options.separate_detections_by_category = True
 # options.sample_seed = 0
+
+options.parallelize_rendering = True
+options.parallelize_rendering_n_cores = 50
+options.parallelize_rendering_with_threads = False
 
 if render_animals_only:
     # Omit some pages from the output, useful when animals are rare
@@ -636,7 +616,7 @@ crop_path = os.path.join(os.path.expanduser('~/crops'),job_name + '_crops')
 output_base = combined_api_output_folder
 device_id = 0
 
-output_file = os.path.join(filename_base,'run_{}_'.format(classifier_name_short) + job_name +  '.sh')
+output_file = os.path.join(filename_base,'run_{}_'.format(classifier_name_short) + job_name + script_extension)
 
 classifier_base = os.path.expanduser('~/models/camera_traps/megaclassifier/v0.1/')
 assert os.path.isdir(classifier_base)
@@ -671,10 +651,9 @@ commands = []
 # commands.append('cd CameraTraps/classification\n')
 # commands.append('conda activate cameratraps-classifier\n')
 
-
 ##%% Crop images
 
-commands.append('\n### Cropping ###\n')
+commands.append('\n' + scc + ' Cropping ' + scc + '\n')
 
 # fn = input_files[0]
 for fn in input_files:
@@ -682,25 +661,25 @@ for fn in input_files:
     input_file_path = fn
     crop_cmd = ''
     
-    crop_comment = '\n# Cropping {}\n'.format(fn)
+    crop_comment = '\n' + scc + ' Cropping {}\n'.format(fn)
     crop_cmd += crop_comment
     
-    crop_cmd += "python crop_detections.py \\\n" + \
-    	 input_file_path + ' \\\n' + \
-         crop_path + ' \\\n' + \
-         '--images-dir "' + image_base + '"' + ' \\\n' + \
-         '--threshold "' + threshold_str + '"' + ' \\\n' + \
-         '--square-crops ' + ' \\\n' + \
-         '--threads "' + n_threads_str + '"' + ' \\\n' + \
-         '--logdir "' + logdir + '"' + ' \\\n' + \
-         '\n'
+    crop_cmd += "python crop_detections.py " + slcc + "\n" + \
+    	 ' ' + input_file_path + ' ' + slcc + '\n' + \
+         ' ' + crop_path + ' ' + slcc + '\n' + \
+         ' ' + '--images-dir "' + image_base + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--threshold "' + threshold_str + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--square-crops ' + ' ' + slcc + '\n' + \
+         ' ' + '--threads "' + n_threads_str + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--logdir "' + logdir + '"' + '\n' + \
+         ' ' + '\n'
     crop_cmd = '{}'.format(crop_cmd)
     commands.append(crop_cmd)
 
 
 ##%% Run classifier
 
-commands.append('\n### Classifying ###\n')
+commands.append('\n' + scc + ' Classifying ' + scc + '\n')
 
 # fn = input_files[0]
 for fn in input_files:
@@ -710,21 +689,21 @@ for fn in input_files:
     
     classify_cmd = ''
     
-    classify_comment = '\n# Classifying {}\n'.format(fn)
+    classify_comment = '\n' + scc + ' Classifying {}\n'.format(fn)
     classify_cmd += classify_comment
     
-    classify_cmd += "python run_classifier.py \\\n" + \
-    	 checkpoint_path + ' \\\n' + \
-         crop_path + ' \\\n' + \
-         classifier_output_path + ' \\\n' + \
-         '--detections-json "' + input_file_path + '"' + ' \\\n' + \
-         '--classifier-categories "' + classifier_categories_path + '"' + ' \\\n' + \
-         '--image-size "' + image_size_str + '"' + ' \\\n' + \
-         '--batch-size "' + batch_size_str + '"' + ' \\\n' + \
-         '--num-workers "' + num_workers_str + '"' + ' \\\n'
+    classify_cmd += "python run_classifier.py " + slcc + "\n" + \
+    	 ' ' + checkpoint_path + ' ' + slcc + '\n' + \
+         ' ' + crop_path + ' ' + slcc + '\n' + \
+         ' ' + classifier_output_path + ' ' + slcc + '\n' + \
+         ' ' + '--detections-json "' + input_file_path + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--classifier-categories "' + classifier_categories_path + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--image-size "' + image_size_str + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--batch-size "' + batch_size_str + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--num-workers "' + num_workers_str + '"' + ' ' + slcc + '\n'
     
     if device_id is not None:
-        classify_cmd += '--device {}'.format(device_id)
+        classify_cmd += ' ' + '--device {}'.format(device_id)
         
     classify_cmd += '\n\n'        
     classify_cmd = '{}'.format(classify_cmd)
@@ -733,7 +712,7 @@ for fn in input_files:
 
 ##%% Remap classifier outputs
 
-commands.append('\n### Remapping ###\n')
+commands.append('\n' + scc + ' Remapping ' + scc + '\n')
 
 # fn = input_files[0]
 for fn in input_files:
@@ -749,14 +728,14 @@ for fn in input_files:
                                        
     remap_cmd = ''
     
-    remap_comment = '\n# Remapping {}\n'.format(fn)
+    remap_comment = '\n' + scc + ' Remapping {}\n'.format(fn)
     remap_cmd += remap_comment
     
-    remap_cmd += "python aggregate_classifier_probs.py \\\n" + \
-        classifier_output_path + ' \\\n' + \
-        '--target-mapping "' + target_mapping_path + '"' + ' \\\n' + \
-        '--output-csv "' + classifier_output_path_remapped + '"' + ' \\\n' + \
-        '--output-label-index "' + output_label_index + '"' + ' \\\n' + \
+    remap_cmd += "python aggregate_classifier_probs.py " + slcc + "\n" + \
+        ' ' + classifier_output_path + ' ' + slcc + '\n' + \
+        ' ' + '--target-mapping "' + target_mapping_path + '"' + ' ' + slcc + '\n' + \
+        ' ' + '--output-csv "' + classifier_output_path_remapped + '"' + ' ' + slcc + '\n' + \
+        ' ' + '--output-label-index "' + output_label_index + '"' \
         '\n'
      
     remap_cmd = '{}'.format(remap_cmd)
@@ -765,7 +744,7 @@ for fn in input_files:
 
 ##%% Merge classification and detection outputs
 
-commands.append('\n### Merging ###\n')
+commands.append('\n' + scc + ' Merging ' + scc + '\n')
 
 # fn = input_files[0]
 for fn in input_files:
@@ -789,17 +768,17 @@ for fn in input_files:
     
     merge_cmd = ''
     
-    merge_comment = '\n# Merging {}\n'.format(fn)
+    merge_comment = '\n' + scc + ' Merging {}\n'.format(fn)
     merge_cmd += merge_comment
     
-    merge_cmd += "python merge_classification_detection_output.py \\\n" + \
-    	 classifier_output_path_remapped + ' \\\n' + \
-         output_label_index + ' \\\n' + \
-         '--output-json "' + final_output_path + '"' + ' \\\n' + \
-         '--detection-json "' + input_file_path + '"' + ' \\\n' + \
-         '--classifier-name "' + classifier_name + '"' + ' \\\n' + \
-         '--threshold "' + classification_threshold_str + '"' + ' \\\n' + \
-         '--typical-confidence-threshold "' + typical_classification_threshold_str + '"' + ' \\\n' + \
+    merge_cmd += "python merge_classification_detection_output.py " + slcc + "\n" + \
+    	 ' ' + classifier_output_path_remapped + ' ' + slcc + '\n' + \
+         ' ' + output_label_index + ' ' + slcc + '\n' + \
+         ' ' + '--output-json "' + final_output_path + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--detection-json "' + input_file_path + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--classifier-name "' + classifier_name + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--threshold "' + classification_threshold_str + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--typical-confidence-threshold "' + typical_classification_threshold_str + '"' + '\n' + \
          '\n'
     merge_cmd = '{}'.format(merge_cmd)
     commands.append(merge_cmd)
@@ -831,7 +810,7 @@ crop_path = os.path.join(os.path.expanduser('~/crops'),job_name + '_crops')
 output_base = combined_api_output_folder
 device_id = 1
 
-output_file = os.path.join(filename_base,'run_{}_'.format(classifier_name_short) + job_name +  '.sh')
+output_file = os.path.join(filename_base,'run_{}_'.format(classifier_name_short) + job_name +  script_extension)
 
 classifier_base = os.path.expanduser('~/models/camera_traps/idfg_classifier/idfg_classifier_20200905_042558')
 assert os.path.isdir(classifier_base)
@@ -866,7 +845,7 @@ commands = []
 
 ##%% Crop images
     
-commands.append('\n### Cropping ###\n')
+commands.append('\n' + scc + ' Cropping ' + scc + '\n')
 
 # fn = input_files[0]
 for fn in input_files:
@@ -874,17 +853,17 @@ for fn in input_files:
     input_file_path = fn
     crop_cmd = ''
     
-    crop_comment = '\n# Cropping {}\n'.format(fn)
+    crop_comment = '\n' + scc + ' Cropping {}\n'.format(fn)
     crop_cmd += crop_comment
     
-    crop_cmd += "python crop_detections.py \\\n" + \
-    	 input_file_path + ' \\\n' + \
-         crop_path + ' \\\n' + \
-         '--images-dir "' + image_base + '"' + ' \\\n' + \
-         '--threshold "' + threshold_str + '"' + ' \\\n' + \
-         '--square-crops ' + ' \\\n' + \
-         '--threads "' + n_threads_str + '"' + ' \\\n' + \
-         '--logdir "' + logdir + '"' + ' \\\n' + \
+    crop_cmd += "python crop_detections.py " + slcc + "\n" + \
+    	 ' ' + input_file_path + ' ' + slcc + '\n' + \
+         ' ' + crop_path + ' ' + slcc + '\n' + \
+         ' ' + '--images-dir "' + image_base + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--threshold "' + threshold_str + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--square-crops ' + ' ' + slcc + '\n' + \
+         ' ' + '--threads "' + n_threads_str + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--logdir "' + logdir + '"' + '\n' + \
          '\n'
     crop_cmd = '{}'.format(crop_cmd)
     commands.append(crop_cmd)
@@ -892,7 +871,7 @@ for fn in input_files:
 
 ##%% Run classifier
 
-commands.append('\n### Classifying ###\n')
+commands.append('\n' + scc + ' Classifying ' + scc + '\n')
 
 # fn = input_files[0]
 for fn in input_files:
@@ -902,21 +881,21 @@ for fn in input_files:
     
     classify_cmd = ''
     
-    classify_comment = '\n# Classifying {}\n'.format(fn)
+    classify_comment = '\n' + scc + ' Classifying {}\n'.format(fn)
     classify_cmd += classify_comment
     
-    classify_cmd += "python run_classifier.py \\\n" + \
-    	 checkpoint_path + ' \\\n' + \
-         crop_path + ' \\\n' + \
-         classifier_output_path + ' \\\n' + \
-         '--detections-json "' + input_file_path + '"' + ' \\\n' + \
-         '--classifier-categories "' + classifier_categories_path + '"' + ' \\\n' + \
-         '--image-size "' + image_size_str + '"' + ' \\\n' + \
-         '--batch-size "' + batch_size_str + '"' + ' \\\n' + \
-         '--num-workers "' + num_workers_str + '"' + ' \\\n'
+    classify_cmd += "python run_classifier.py " + slcc + "\n" + \
+    	 ' ' + checkpoint_path + ' ' + slcc + '\n' + \
+         ' ' + crop_path + ' ' + slcc + '\n' + \
+         ' ' + classifier_output_path + ' ' + slcc + '\n' + \
+         ' ' + '--detections-json "' + input_file_path + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--classifier-categories "' + classifier_categories_path + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--image-size "' + image_size_str + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--batch-size "' + batch_size_str + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--num-workers "' + num_workers_str + '"' + ' ' + slcc + '\n'
     
     if device_id is not None:
-        classify_cmd += '--device {}'.format(device_id)
+        classify_cmd += ' ' + '--device {}'.format(device_id)
         
     classify_cmd += '\n\n'    
     classify_cmd = '{}'.format(classify_cmd)
@@ -925,7 +904,7 @@ for fn in input_files:
 
 ##%% Merge classification and detection outputs
 
-commands.append('\n### Merging ###\n')
+commands.append('\n' + scc + ' Merging ' + scc + '\n')
 
 # fn = input_files[0]
 for fn in input_files:
@@ -942,17 +921,17 @@ for fn in input_files:
     
     merge_cmd = ''
     
-    merge_comment = '\n# Merging {}\n'.format(fn)
+    merge_comment = '\n' + scc + ' Merging {}\n'.format(fn)
     merge_cmd += merge_comment
     
-    merge_cmd += "python merge_classification_detection_output.py \\\n" + \
-    	 classifier_output_path + ' \\\n' + \
-         classifier_categories_path + ' \\\n' + \
-         '--output-json "' + final_output_path_ic + '"' + ' \\\n' + \
-         '--detection-json "' + input_file_path + '"' + ' \\\n' + \
-         '--classifier-name "' + classifier_name + '"' + ' \\\n' + \
-         '--threshold "' + classification_threshold_str + '"' + ' \\\n' + \
-         '--typical-confidence-threshold "' + typical_classification_threshold_str + '"' + ' \\\n' + \
+    merge_cmd += "python merge_classification_detection_output.py " + slcc + "\n" + \
+    	 ' ' + classifier_output_path + ' ' + slcc + '\n' + \
+         ' ' + classifier_categories_path + ' ' + slcc + '\n' + \
+         ' ' + '--output-json "' + final_output_path_ic + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--detection-json "' + input_file_path + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--classifier-name "' + classifier_name + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--threshold "' + classification_threshold_str + '"' + ' ' + slcc + '\n' + \
+         ' ' + '--typical-confidence-threshold "' + typical_classification_threshold_str + '"' + '\n' + \
          '\n'
     merge_cmd = '{}'.format(merge_cmd)
     commands.append(merge_cmd)
@@ -969,8 +948,14 @@ st = os.stat(output_file)
 os.chmod(output_file, st.st_mode | stat.S_IEXEC)
 
 
+#%% Run the classifier(s) via the .sh script(s) write just wrote
+
+# ...
+
+
 #%% Within-image classification smoothing
 
+#
 # Only count detections with a classification confidence threshold above
 # *classification_confidence_threshold*, which in practice means we're only
 # looking at one category per detection.
@@ -982,25 +967,39 @@ os.chmod(output_file, st.st_mode | stat.S_IEXEC)
 #
 # Optionally treat some classes as particularly unreliable, typically used to overwrite an 
 # "other" class.
+#
+# This cell also removes everything but the non-dominant classification for each detection.
+#
+
+# How many detections do we need above the classification threshold to determine a dominant category
+# for an image?
+min_detections_above_threshold = 4
+
+# Even if we have a dominant class, if a non-dominant class has at least this many classifications
+# in an image, leave them alone.
+max_detections_secondary_class = 3
+
+# If the dominant class has at least this many classifications, overwrite "other" classifications
+min_detections_to_overwrite_other = 2
+other_category_names = ['other']
+
+# What confidence threshold should we use for assessing the dominant category in an image?
+classification_confidence_threshold = 0.6
+
+# Which classifications should we even bother over-writing?
+classification_overwrite_threshold = 0.3
+
+# Detection confidence threshold for things we count when determining a dominant class
+detection_confidence_threshold = 0.2
+
+# Which detections should we even bother over-writing?
+detection_overwrite_threshold = 0.05
 
 classification_detection_files = [    
-    final_output_path_mc,
-    final_output_path_ic    
+    final_output_path_mc,final_output_path_ic
     ]
 
 assert all([os.path.isfile(fn) for fn in classification_detection_files])
-
-# Only count detections with a classification confidence threshold above
-# *classification_confidence_threshold*, which in practice means we're only
-# looking at one category per detection.
-#
-# If an image has at least *min_detections_above_threshold* such detections
-# in the most common category, and no more than *max_detections_secondary_class*
-# in the second-most-common category, flip all detections to the most common
-# category.
-#
-# Optionally treat some classes as particularly unreliable, typically used to overwrite an 
-# "other" class.
 
 smoothed_classification_files = []
 
@@ -1013,31 +1012,8 @@ for final_output_path in classification_detection_files:
     with open(classifier_output_path,'r') as f:
         d = json.load(f)
     
-    # d['classification_categories']
-    
-    # im['detections']
-    
-    # path_utils.open_file(os.path.join(input_path,im['file']))
-    
     from collections import defaultdict
     
-    min_detections_above_threshold = 4
-    max_detections_secondary_class = 3
-    
-    min_detections_to_overwrite_other = 2
-    other_category_names = ['other']
-    
-    classification_confidence_threshold = 0.6
-    
-    # Which classifications should we even bother over-writing?
-    classification_overwrite_threshold = 0.3 # classification_confidence_threshold
-    
-    # Detection confidence threshold for things we count
-    detection_confidence_threshold = 0.2
-    
-    # Which detections should we even bother over-writing?
-    detection_overwrite_threshold = 0.05
-        
     category_name_to_id = {d['classification_categories'][k]:k for k in d['classification_categories']}
     other_category_ids = []
     for s in other_category_names:
@@ -1052,6 +1028,28 @@ for final_output_path in classification_detection_files:
     
     n_detections_flipped = 0
     n_images_changed = 0
+    
+    # Before we do anything else, get rid of everything but the top classification
+    # for each detection.
+    for im in tqdm(d['images']):
+        
+        if 'detections' not in im or im['detections'] is None or len(im['detections']) == 0:
+            continue
+        
+        detections = im['detections']
+        
+        for det in detections:
+            
+            if 'classifications' not in det or len(det['classifications']) == 0:
+                continue
+            
+            classification_confidence_values = [c[1] for c in det['classifications']]
+            assert is_list_sorted(classification_confidence_values,reverse=True)
+            det['classifications'] = [det['classifications'][0]]
+    
+        # ...for each detection in this image
+        
+    # ...for each image
     
     # im = d['images'][0]    
     for im in tqdm(d['images']):
@@ -1082,7 +1080,9 @@ for final_output_path in classification_detection_files:
         
         # Handle a quirky special case: if the most common category is "other" and 
         # it's "tied" with the second-most-common category, swap them
-        if (len(keys) > 1) and (keys[0] in other_category_ids) and (keys[1] not in other_category_ids) and\
+        if (len(keys) > 1) and \
+            (keys[0] in other_category_ids) and \
+            (keys[1] not in other_category_ids) and \
             (category_to_count[keys[0]] == category_to_count[keys[1]]):
                 keys[1], keys[0] = keys[0], keys[1]
         
@@ -1137,8 +1137,8 @@ for final_output_path in classification_detection_files:
             continue
         
         # At this point, we know we have a dominant category; change all other above-threshold
-        # classifications to that category.  That category may have been "other", in which case we may have
-        # already made the relevant changes.
+        # classifications to that category.  That category may have been "other", in which
+        # case we may have already made the relevant changes.
         
         n_detections_flipped_this_image = 0
         
@@ -1181,7 +1181,7 @@ for final_output_path in classification_detection_files:
 # ...for each file we want to smooth
 
 
-#%% Post-processing (post-classification)
+#%% Post-processing (post-classification, post-within-image-smoothing)
 
 classification_detection_files = smoothed_classification_files
     
@@ -1192,7 +1192,6 @@ for classification_detection_file in classification_detection_files:
     
     options = PostProcessingOptions()
     options.image_base_dir = input_path
-    options.parallelize_rendering = True
     options.include_almost_detections = True
     options.num_images_to_sample = 10000
     options.confidence_threshold = 0.2
@@ -1201,7 +1200,11 @@ for classification_detection_file in classification_detection_files:
     options.ground_truth_json_file = None
     options.separate_detections_by_category = True
     
-    folder_token = classification_detection_file.split('/')[-1].replace('classifier.json','')
+    options.parallelize_rendering = True
+    options.parallelize_rendering_n_cores = 50
+    options.parallelize_rendering_with_threads = False
+    
+    folder_token = classification_detection_file.split(os.path.sep)[-1].replace('classifier.json','')
     
     output_base = os.path.join(postprocessing_output_folder, folder_token + \
         base_task_name + '_{:.3f}'.format(options.confidence_threshold))
@@ -1214,18 +1217,597 @@ for classification_detection_file in classification_detection_files:
     path_utils.open_file(ppresults.output_html_file)
 
 
+#%% Read EXIF data from all images
+
+from data_management import read_exif
+exif_options = read_exif.ReadExifOptions()
+
+exif_options.verbose = False
+exif_options.n_workers = 50
+exif_options.use_threads = False
+exif_options.processing_library = 'pil'
+
+exif_results_file = os.path.join(filename_base,'exif_data.json')
+
+if os.path.isfile(exif_results_file):
+    print('Reading EXIF results from {}'.format(exif_results_file))
+    with open(exif_results_file,'r') as f:
+        exif_results = json.load(f)
+else:        
+    exif_results = read_exif.read_exif_from_folder(input_path,
+                                                   output_file=exif_results_file,
+                                                   options=exif_options)
+
+
+#%% Prepare COCO-camera-traps-compatible image objects for EXIF results
+
+# import dateutil
+import datetime    
+import time
+
+def parse_date_from_exif_datetime(s):
+        
+    # This is a standard format for EXIF datetime, and dateutil.parser 
+    # doesn't handle it correctly.
+    
+    # return dateutil.parser.parse(s)    
+    return time.strptime(s, '%Y:%m:%d %H:%M:%S')
+
+now = datetime.datetime.now()
+
+image_info = []
+
+# exif_result = exif_results[0]
+for exif_result in tqdm(exif_results):
+    
+    im = {}
+    
+    # Currently we assume that each leaf-node folder is a location
+    im['location'] = os.path.dirname(exif_result['file_name'])
+    im['file_name'] = exif_result['file_name']
+    im['id'] = im['file_name']
+    exif_dt = exif_result['exif_tags']['DateTime']
+    im['datetime'] = datetime.datetime.fromtimestamp(
+        time.mktime(parse_date_from_exif_datetime(exif_dt)))
+    
+    # We collected this image this century, but not today, make sure the parsed datetime
+    # jives with that.
+    #
+    # The latter check is to make sure we don't repeat a particular pathological approach
+    # to datetime parsing, where dateutil parses time correctly, but swaps in the current
+    # date when it's not sure where the date is.
+    assert im['datetime'].year >= 2000    
+    assert (now - im['datetime']).total_seconds() > 1*24*60*60
+
+    image_info.append(im)
+    
+# ...for each exif image result
+
+
+#%% Assemble into sequences
+
+from collections import defaultdict
+from data_management import cct_json_utils
+
+print('Assembling images into sequences')
+
+cct_json_utils.create_sequences(image_info)
+
+# Make a list of images appearing at each location
+sequence_to_images = defaultdict(list)
+
+# im = image_info[0]
+for im in tqdm(image_info):
+    sequence_to_images[im['seq_id']].append(im)
+
+all_sequences = list(sorted(sequence_to_images.keys()))
+
+
+#%% Load classification results
+
+sequence_level_smoothing_input_file = smoothed_classification_files[0]
+
+with open(sequence_level_smoothing_input_file,'r') as f:
+    d = json.load(f)
+
+# Map each filename to classification results for that file
+filename_to_results = {}
+
+for im in tqdm(d['images']):
+    filename_to_results[im['file'].replace('\\','/')] = im
+
+
+#%% Smooth classification results over sequences (prep)
+
+from ct_utils import is_list_sorted
+
+classification_category_id_to_name = d['classification_categories']
+classification_category_name_to_id = {v: k for k, v in classification_category_id_to_name.items()}
+
+class_names = list(classification_category_id_to_name.values())
+
+animal_detection_category = '1'
+assert(d['detection_categories'][animal_detection_category] == 'animal')
+
+other_category_names = set(['other'])
+other_category_ids = set([classification_category_name_to_id[s] for s in other_category_names])
+
+# These are the only classes to which we're going to switch other classifications
+category_names_to_smooth_to = set(['deer','elk','cow','canid','cat','bird','bear'])
+category_ids_to_smooth_to = set([classification_category_name_to_id[s] for s in category_names_to_smooth_to])
+assert all([s in class_names for s in category_names_to_smooth_to])    
+
+# Only switch classifications to the dominant class if we see the dominant class at least
+# this many times
+min_dominant_class_classifications_above_threshold_for_class_smoothing = 5 # 2
+
+# If we see more than this many of a class that are above threshold, don't switch those
+# classifications to the dominant class.
+max_secondary_class_classifications_above_threshold_for_class_smoothing = 5
+
+# If the ratio between a dominant class and a secondary class count is greater than this, 
+# regardless of the secondary class count, switch those classificaitons (i.e., ignore
+# max_secondary_class_classifications_above_threshold_for_class_smoothing).
+#
+# This may be different for different dominant classes, e.g. if we see lots of cows, they really
+# tend to be cows.  Less so for canids, so we set a higher "override ratio" for canids.
+min_dominant_class_ratio_for_secondary_override_table = {classification_category_name_to_id['cow']:2,None:3}
+
+# If there are at least this many classifications for the dominant class in a sequence,
+# regardless of what that class is, convert all 'other' classifications (regardless of 
+# confidence) to that class.
+min_dominant_class_classifications_above_threshold_for_other_smoothing = 3 # 2
+
+# If there are at least this many classifications for the dominant class in a sequence,
+# regardless of what that class is, classify all previously-unclassified detections
+# as that class.
+min_dominant_class_classifications_above_threshold_for_unclassified_smoothing = 3 # 2
+
+# Only count classifications above this confidence level when determining the dominant
+# class, and when deciding whether to switch other classifications.
+classification_confidence_threshold = 0.6
+
+# Confidence values to use when we change a detection's classification (the
+# original confidence value is irrelevant at that point)
+flipped_other_confidence_value = 0.6
+flipped_class_confidence_value = 0.6
+flipped_unclassified_confidence_value = 0.6
+
+min_detection_confidence_for_unclassified_flipping = 0.15
+
+
+#%% Smooth classification results over sequences (supporting functions)
+    
+def results_for_sequence(images_this_sequence):
+    """
+    Fetch MD results for every image in this sequence, based on the 'file_name' field
+    """
+    
+    results_this_sequence = []
+    for im in images_this_sequence:
+        fn = im['file_name']
+        results_this_image = filename_to_results[fn]
+        assert isinstance(results_this_image,dict)
+        results_this_sequence.append(results_this_image)
+        
+    return results_this_sequence
+            
+    
+def top_classifications_for_sequence(images_this_sequence):
+    """
+    Return all top-1 animal classifications for every detection in this 
+    sequence, regardless of  confidence
+
+    May modify [images_this_sequence] (removing non-top-1 classifications)
+    """
+    
+    classifications_this_sequence = []
+
+    # im = images_this_sequence[0]
+    for im in images_this_sequence:
+        
+        fn = im['file_name']
+        results_this_image = filename_to_results[fn]
+        
+        if results_this_image['detections'] is None:
+            continue
+        
+        # det = results_this_image['detections'][0]
+        for det in results_this_image['detections']:
+            
+            # Only process animal detections
+            if det['category'] != animal_detection_category:
+                continue
+            
+            # Only process detections with classification information
+            if 'classifications' not in det:
+                continue
+            
+            # We only care about top-1 classifications, remove everything else
+            if len(det['classifications']) > 1:
+                
+                # Make sure the list of classifications is already sorted by confidence
+                classification_confidence_values = [c[1] for c in det['classifications']]
+                assert is_list_sorted(classification_confidence_values,reverse=True)
+                
+                # ...and just keep the first one
+                det['classifications'] = [det['classifications'][0]]
+                
+            # Confidence values should be sorted within a detection; verify this, and ignore 
+            top_classification = det['classifications'][0]
+            
+            classifications_this_sequence.append(top_classification)
+    
+        # ...for each detection in this image
+        
+    # ...for each image in this sequence
+
+    return classifications_this_sequence
+
+# ...top_classifications_for_sequence()
+
+
+def count_above_threshold_classifications(classifications_this_sequence):    
+    """
+    Given a list of classification objects (tuples), return a dict mapping
+    category IDs to the count of above-threshold classifications.
+    
+    This dict's keys will be sorted in descending order by frequency.
+    """
+    
+    # Count above-threshold classifications in this sequence
+    category_to_count = defaultdict(int)
+    for c in classifications_this_sequence:
+        if c[1] >= classification_confidence_threshold:
+            category_to_count[c[0]] += 1
+    
+    # Sort the dictionary in descending order by count
+    category_to_count = {k: v for k, v in sorted(category_to_count.items(),
+                                                 key=lambda item: item[1], 
+                                                 reverse=True)}
+    
+    keys_sorted_by_frequency = list(category_to_count.keys())
+        
+    # Handle a quirky special case: if the most common category is "other" and 
+    # it's "tied" with the second-most-common category, swap them.
+    if len(other_category_names) > 0:
+        if (len(keys_sorted_by_frequency) > 1) and \
+            (keys_sorted_by_frequency[0] in other_category_names) and \
+            (keys_sorted_by_frequency[1] not in other_category_names) and \
+            (category_to_count[keys_sorted_by_frequency[0]] == \
+             category_to_count[keys_sorted_by_frequency[1]]):
+                keys_sorted_by_frequency[1], keys_sorted_by_frequency[0] = \
+                    keys_sorted_by_frequency[0], keys_sorted_by_frequency[1]
+
+    sorted_category_to_count = {}    
+    for k in keys_sorted_by_frequency:
+        sorted_category_to_count[k] = category_to_count[k]
+        
+    return sorted_category_to_count
+
+# ...def count_above_threshold_classifications()
+    
+def sort_images_by_time(images):
+    """
+    Returns a copy of [images], sorted by the 'datetime' field (ascending).
+    """
+    return sorted(images, key = lambda im: im['datetime'])        
+    
+
+def get_first_key_from_sorted_dictionary(di):
+    if len(di) == 0:
+        return None
+    return next(iter(di.items()))[0]
+
+
+def get_first_value_from_sorted_dictionary(di):
+    if len(di) == 0:
+        return None
+    return next(iter(di.items()))[1]
+
+
+#%% Smooth classifications at the sequence level (main loop)
+
+n_other_flips = 0
+n_classification_flips = 0
+n_unclassified_flips = 0
+
+# Break if this token is contained in a filename (set to None for normal operation)
+debug_fn = None
+
+# i_sequence = 0; seq_id = all_sequences[i_sequence]
+for i_sequence,seq_id in tqdm(enumerate(all_sequences),total=len(all_sequences)):
+    
+    images_this_sequence = sequence_to_images[seq_id]
+    
+    # Count top-1 classifications in this sequence (regardless of confidence)
+    classifications_this_sequence = top_classifications_for_sequence(images_this_sequence)
+    
+    # Handy debugging code for looking at the numbers for a particular sequence
+    for im in images_this_sequence:
+        if debug_fn is not None and debug_fn in im['file_name']:
+            raise ValueError('')
+             
+    if len(classifications_this_sequence) == 0:
+        continue
+    
+    # Count above-threshold classifications for each category
+    sorted_category_to_count = count_above_threshold_classifications(classifications_this_sequence)
+    
+    if len(sorted_category_to_count) == 0:
+        continue
+    
+    max_count = get_first_value_from_sorted_dictionary(sorted_category_to_count)    
+    dominant_category_id = get_first_key_from_sorted_dictionary(sorted_category_to_count)
+    
+    # If our dominant category ID isn't something we want to smooth to, don't mess around with this sequence
+    if dominant_category_id not in category_ids_to_smooth_to:
+        continue
+        
+    
+    ## Smooth "other" classifications ##
+    
+    if max_count >= min_dominant_class_classifications_above_threshold_for_other_smoothing:        
+        for c in classifications_this_sequence:           
+            if c[0] in other_category_ids:
+                n_other_flips += 1
+                c[0] = dominant_category_id
+                c[1] = flipped_other_confidence_value
+
+
+    # By not re-computing "max_count" here, we are making a decision that the count used
+    # to decide whether a class should overwrite another class does not include any "other"
+    # classifications we changed to be the dominant class.  If we wanted to include those...
+    # 
+    # sorted_category_to_count = count_above_threshold_classifications(classifications_this_sequence)
+    # max_count = get_first_value_from_sorted_dictionary(sorted_category_to_count)    
+    # assert dominant_category_id == get_first_key_from_sorted_dictionary(sorted_category_to_count)
+    
+    
+    ## Smooth non-dominant classes ##
+    
+    if max_count >= min_dominant_class_classifications_above_threshold_for_class_smoothing:
+        
+        # Don't flip classes to the dominant class if they have a large number of classifications
+        category_ids_not_to_flip = set()
+        
+        for category_id in sorted_category_to_count.keys():
+            secondary_class_count = sorted_category_to_count[category_id]
+            dominant_to_secondary_ratio = max_count / secondary_class_count
+            
+            # Don't smooth over this class if there are a bunch of them, and the ratio
+            # if primary to secondary class count isn't too large
+            
+            # Default ratio
+            ratio_for_override = min_dominant_class_ratio_for_secondary_override_table[None]
+            
+            # Does this dominant class have a custom ratio?
+            if dominant_category_id in min_dominant_class_ratio_for_secondary_override_table:
+                ratio_for_override = \
+                    min_dominant_class_ratio_for_secondary_override_table[dominant_category_id]
+                    
+            if (dominant_to_secondary_ratio < ratio_for_override) and \
+                (secondary_class_count > \
+                 max_secondary_class_classifications_above_threshold_for_class_smoothing):
+                category_ids_not_to_flip.add(category_id)
+                
+        for c in classifications_this_sequence:
+            if c[0] not in category_ids_not_to_flip and c[0] != dominant_category_id:
+                c[0] = dominant_category_id
+                c[1] = flipped_class_confidence_value
+                n_classification_flips += 1
+        
+        
+    ## Smooth unclassified detections ##
+        
+    if max_count >= min_dominant_class_classifications_above_threshold_for_unclassified_smoothing:
+        
+        results_this_sequence = results_for_sequence(images_this_sequence)
+        detections_this_sequence = []
+        for r in results_this_sequence:
+            if r['detections'] is not None:
+                detections_this_sequence.extend(r['detections'])
+        for det in detections_this_sequence:
+            if 'classifications' in det and len(det['classifications']) > 0:
+                continue
+            if det['category'] != animal_detection_category:
+                continue
+            if det['conf'] < min_detection_confidence_for_unclassified_flipping:
+                continue
+            det['classifications'] = [[dominant_category_id,flipped_unclassified_confidence_value]]
+            n_unclassified_flips += 1
+                            
+# ...for each sequence    
+    
+print('\Finished sequence smoothing\n')
+print('Flipped {} "other" classifications'.format(n_other_flips))
+print('Flipped {} species classifications'.format(n_classification_flips))
+print('Flipped {} unclassified detections'.format(n_unclassified_flips))
+    
+
+#%% Write smoothed classification results
+
+sequence_smoothed_classification_file = sequence_level_smoothing_input_file.replace(
+    '.json','_seqsmoothing.json')
+
+print('Writing sequence-smoothed classification results to {}'.format(
+    sequence_smoothed_classification_file))
+
+with open(sequence_smoothed_classification_file,'w') as f:
+    json.dump(d,f,indent=1)
+
+
+#%% Post-processing (post-classification, post-within-image-and-within-sequence-smoothing)
+
+options = PostProcessingOptions()
+options.image_base_dir = input_path
+options.include_almost_detections = True
+options.num_images_to_sample = 10000
+options.confidence_threshold = 0.2
+options.classification_confidence_threshold = 0.7
+options.almost_detection_confidence_threshold = options.confidence_threshold - 0.05
+options.ground_truth_json_file = None
+options.separate_detections_by_category = True
+
+options.parallelize_rendering = True
+options.parallelize_rendering_n_cores = 50
+options.parallelize_rendering_with_threads = False
+
+folder_token = sequence_smoothed_classification_file.split(os.path.sep)[-1].replace(
+    '_within_image_smoothing_seqsmoothing','')
+folder_token = folder_token.replace('.json','_seqsmoothing')
+
+output_base = os.path.join(postprocessing_output_folder, folder_token + \
+    base_task_name + '_{:.3f}'.format(options.confidence_threshold))
+os.makedirs(output_base, exist_ok=True)
+print('Processing {} to {}'.format(base_task_name, output_base))
+
+options.api_output_file = sequence_smoothed_classification_file
+options.output_dir = output_base
+ppresults = process_batch_results(options)
+path_utils.open_file(ppresults.output_html_file)
+
+
+#%% Zip .json files
+
+json_files = os.listdir(combined_api_output_folder)
+json_files = [fn for fn in json_files if fn.endswith('.json')]
+json_files = [os.path.join(combined_api_output_folder,fn) for fn in json_files]
+
+import zipfile
+from zipfile import ZipFile
+
+output_path = combined_api_output_folder
+
+def zip_json_file(fn, overwrite=False):
+    
+    assert fn.endswith('.json')
+    basename = os.path.basename(fn)
+    zip_file_name = os.path.join(output_path,basename + '.zip')
+    
+    if (not overwrite) and (os.path.isfile(zip_file_name)):
+        print('Skipping existing file {}'.format(zip_file_name))
+        return
+    
+    print('Zipping {} to {}'.format(fn,zip_file_name))
+    
+    with ZipFile(zip_file_name,'w',zipfile.ZIP_DEFLATED) as zipf:
+        zipf.write(fn,arcname=basename,compresslevel=9,compress_type=zipfile.ZIP_DEFLATED)
+
+from multiprocessing.pool import ThreadPool
+pool = ThreadPool(len(json_files))
+with tqdm(total=len(json_files)) as pbar:
+    for i,_ in enumerate(pool.imap_unordered(zip_json_file,json_files)):
+        pbar.update()
+
+
+#%% 99.9% of jobs end here
+
+# Everything after this is run ad hoc and/or requires some manual editing.
+
+
+#%% Compare results files for different model versions (or before/after RDE)
+
+import itertools
+
+from api.batch_processing.postprocessing.compare_batch_results import (
+    BatchComparisonOptions,PairwiseBatchComparisonOptions,compare_batch_results)
+
+options = BatchComparisonOptions()
+
+options.job_name = organization_name_short
+options.output_folder = os.path.join(postprocessing_output_folder,'model_comparison')
+options.image_folder = input_path
+
+options.pairwise_options = []
+
+filenames = [
+    '/postprocessing/organization/mdv4_results.json',
+    '/postprocessing/organization/mdv5a_results.json',
+    '/postprocessing/organization/mdv5b_results.json'    
+    ]
+
+detection_thresholds = [0.7,0.15,0.15]
+
+assert len(detection_thresholds) == len(filenames)
+
+rendering_thresholds = [(x*0.6666) for x in detection_thresholds]
+
+# Choose all pairwise combinations of the files in [filenames]
+for i, j in itertools.combinations(list(range(0,len(filenames))),2):
+        
+    pairwise_options = PairwiseBatchComparisonOptions()
+    
+    pairwise_options.results_filename_a = filenames[i]
+    pairwise_options.results_filename_b = filenames[j]
+    
+    pairwise_options.rendering_confidence_threshold_a = rendering_thresholds[i]
+    pairwise_options.rendering_confidence_threshold_b = rendering_thresholds[j]
+    
+    pairwise_options.detection_thresholds_a = {'animal':detection_thresholds[i],
+                                               'person':detection_thresholds[i],
+                                               'vehicle':detection_thresholds[i]}
+    pairwise_options.detection_thresholds_b = {'animal':detection_thresholds[j],
+                                               'person':detection_thresholds[j],
+                                               'vehicle':detection_thresholds[j]}
+    options.pairwise_options.append(pairwise_options)
+
+results = compare_batch_results(options)
+
+from path_utils import open_file # from ai4eutils
+open_file(results.html_output_file)
+
+
+#%% Merge in high-confidence detections from another results file
+
+from api.batch_processing.postprocessing.merge_detections import MergeDetectionsOptions,merge_detections
+
+source_files = ['']
+target_file = ''
+output_file = target_file.replace('.json','_merged.json')
+
+options = MergeDetectionsOptions()
+options.max_detection_size = 1.0
+options.target_confidence_threshold = 0.25
+options.categories_to_include = [1]
+options.source_confidence_thresholds = [0.2]
+merge_detections(source_files, target_file, output_file, options)
+
+merged_detections_file = output_file
+
+
 #%% Create a new category for large boxes
 
 from api.batch_processing.postprocessing import categorize_detections_by_size
 
-options = categorize_detections_by_size.SizeCategorizationOptions()
+size_options = categorize_detections_by_size.SizeCategorizationOptions()
 
 # This is a size threshold, not a confidence threshold
-options.threshold = 0.85
+size_options.threshold = 0.9
+size_options.output_category_name = 'large_detections'
+# size_options.categories_to_separate = [3]
+size_options.measurement = 'size' # 'width'
 
-input_file = r"g:\organization\file.json"
-size_separated_file = input_file.replace('.json','-size-separated-{}.json'.format(options.threshold))
-d = categorize_detections_by_size.categorize_detections_by_size(input_file,size_separated_file,options)
+input_file = filtered_output_filename
+size_separated_file = input_file.replace('.json','-size-separated-{}.json'.format(
+    size_options.threshold))
+d = categorize_detections_by_size.categorize_detections_by_size(input_file,size_separated_file,
+                                                                size_options)
+
+
+#%% Preview large boxes
+
+output_base_large_boxes = os.path.join(postprocessing_output_folder, 
+    base_task_name + '_{}_{:.3f}_large_boxes'.format(rde_string, options.confidence_threshold))    
+os.makedirs(output_base_large_boxes, exist_ok=True)
+print('Processing post-RDE, post-size-separation to {}'.format(output_base_large_boxes))
+
+options.api_output_file = size_separated_file
+options.output_dir = output_base_large_boxes
+
+ppresults = process_batch_results(options)
+html_output_file = ppresults.output_html_file
+path_utils.open_file(html_output_file)
 
 
 #%% .json splitting
@@ -1396,6 +1978,7 @@ os.chmod(cmd_file, st.st_mode | stat.S_IEXEC)
 
 #%% End notebook: turn this script into a notebook (how meta!)
 
+import os
 import nbformat as nbf
 
 input_py_file = os.path.expanduser('~/git/CameraTraps/api/batch_processing/data_preparation/manage_local_batch.py')

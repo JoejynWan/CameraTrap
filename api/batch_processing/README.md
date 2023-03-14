@@ -233,7 +233,7 @@ Example output with both detection and classification results:
     },
     "images": [
         {
-            "file": "path/from/base/dir/image1.jpg",
+            "file": "path/from/base/dir/image_with_animal.jpg",
             "meta": "optional free-text metadata",
             "max_detection_conf": 0.926,
             "detections": [
@@ -255,13 +255,13 @@ Example output with both detection and classification results:
             ]
         },
         {
-            "file": "/path/from/base/dir/image2.jpg",
+            "file": "/path/from/base/dir/empty_image.jpg",
             "meta": "",
             "max_detection_conf": 0,
             "detections": []
         },
         {
-            "file": "/path/from/base/dir2/corrupted.jpg",
+            "file": "/path/from/base/dir2/corrupted_image.jpg",
             "failure": "Failure image access"
         }
     ]
@@ -298,8 +298,6 @@ The detection category `category` can be interpreted using the `detection_catego
 Detection categories not listed here are allowed by this format specification, but should be treated as "no detection".
 
 When the detector model detects no animal (or person or vehicle), the confidence `conf` is shown as 0.0 (not confident that there is an object of interest) and the `detections` field is an empty list.
-
-All detections above the confidence threshold of 0.1 are recorded in the output file.
 
 
 ##### Classifier outputs

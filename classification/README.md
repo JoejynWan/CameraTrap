@@ -40,7 +40,7 @@ The classifiers trained with this pipeline are intended to be used in conjunctio
 
 ## Installation
 
-Install [miniconda3](https://docs.conda.io/en/latest/miniconda.html). Then create the conda environment using the following command. If you want to run PyTorch on a GPU, be sure to comment out `cpuonly` and uncomment `cudatoolkit` in `environment-classifier.yml`. If you need to add/remove/modify packages, make the appropriate change in the `environment-classifier.yml` file and run the following command again.
+Install Anaconda or [miniconda3](https://docs.conda.io/en/latest/miniconda.html). Then create the conda environment using the following command:
 
 ```bash
 conda env update -f environment-classifier.yml --prune
@@ -52,35 +52,44 @@ Activate this conda environment:
 conda activate cameratraps-classifier
 ```
 
-Verify that *Pillow-SIMD* (installed from PyPI) overshadows the normal *Pillow* package (installed from conda) by running:
+## Verifying that CUDA is available (and dealing with the case where it isn't)
+
+Verify that CUDA is available (assumes that the current working directory is the CameraTraps repo root):
 
 ```bash
-python -c "import PIL; print(PIL.__version__)"
+python sandbox/torch_test.py
 ```
 
-Make sure that the *Pillow* version ends in `'.postX'`, which indicates *Pillow-SIMD*.
+If CUDA isn't available but should be (i.e., you have an NVIDIA GPU and recent drivers)...
 
-If this is running on a VM, enable remote Jupyter notebook access by doing the following. For more information, see the [Jupyter notebook server guide](https://jupyter-notebook.readthedocs.io/en/stable/public_server.html).
-
-1. Make sure that the desired port (e.g., 8888) is publicly exposed on the VM.
-2. Run the following command to create a Jupyter config file at `$HOME/.jupyter/jupyter_notebook_config.py`.
-
-    ```bash
-    jupyter notebook --generate-config
-    ```
-
-3. Add the following line to the config file:
-
-    ```python
-    c.NotebookApp.ip = '*'
-    ```
-
-To use the *tqdm* widget in a notebook through JupyterLab (`jupyter lab`), make sure you have node.js installed, then run the following command. See the [*ipywidgets* installation guide](https://ipywidgets.readthedocs.io/en/latest/user_install.html) for more details.
+YMMV, but in at least one Linux environment, the following fixed this issue:
 
 ```bash
-jupyter labextension install @jupyter-widgets/jupyterlab-manager
+pip uninstall torch torchvision
+conda install pytorch=1.10.1 torchvision=0.11.2 -c pytorch
 ```
 
+YMMV again, but in at least one Windows environment, the following fixed this issue:
+
+```bash
+pip uninstall torch torchvision
+conda install pytorch==1.10.1 torchvision==0.11.2 torchaudio==0.10.1 cudatoolkit=11.3 -c pytorch -c conda-forge
+```
+
+## Optional steps to make classification faster in Linux
+
+If you are on Linux, you may also get some speedup by installing the [accimage](https://github.com/pytorch/accimage) package for acclerated image loading.  Because this is Linux-only and optional, we have commented it out of the environment file, but you can install it with:
+
+```bash
+conda install -c conda-forge accimage
+```
+
+Similarly, on Linux, you may get some speedup by installing [Pillow-SIMD](https://github.com/uploadcare/pillow-simd):
+
+```bash
+pip uninstall -y pillow
+pip install pillow-simd
+```
 
 ## Directory Structure
 

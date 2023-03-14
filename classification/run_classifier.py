@@ -138,8 +138,11 @@ def main(model_path: str,
          num_workers: int,
          device_id: int | None = None) -> None:
     """Main function."""
-    # evaluating with accimage is much faster than Pillow or Pillow-SIMD
+    
+    # Evaluating with accimage is much faster than Pillow or Pillow-SIMD, but accimage
+    # is Linux-only.
     try:
+        import accimage
         tv.set_image_backend('accimage')
     except:
         print('Warning: could not start accimage backend (ignore this if you\'re not using Linux)')
