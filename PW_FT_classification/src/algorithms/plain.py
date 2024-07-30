@@ -253,9 +253,6 @@ class Plain(pl.LightningModule):
                      self.train_class_counts[unique_eval_labels[i]])
                      for i in range(len(class_acc))]
         
-        acc_df = pd.DataFrame(acc_list, 
-                              columns=['acc', 'label_ids', 'labels', 'train_class_counts'])
-        
         if print_class_acc:
             print('\n')
             for i in range(len(class_acc)):
@@ -264,5 +261,9 @@ class Plain(pl.LightningModule):
                                                                acc_list[i][3])
                 info += '{:.2f}'.format(acc_list[i][0] * 100)
                 print(info)
-        
+
+        acc_df = pd.DataFrame(acc_list,columns=['acc', 'label_ids', 'labels', 'train_class_counts'])
+        acc_df = acc_df[['label_ids', 'labels', 'train_class_counts', 'acc']]
+        acc_df["acc"] = pd.to_numeric(acc_df["acc"])
+
         return(acc_df)
