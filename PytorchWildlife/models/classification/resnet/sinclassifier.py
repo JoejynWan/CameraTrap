@@ -87,7 +87,7 @@ class SINClassifier(PlainResNetInference):
         preds = probs.argmax(dim=1)
         confs = probs.max(dim=1)[0]
         confidences = probs[0].tolist()
-        result = [[self.CLASS_NAMES[i], confidence] for i, confidence in enumerate(confidences)]
+        result = [[i, confidence] for i, confidence in enumerate(confidences)]
 
         results = []
         for pred, img_id, conf in zip(preds, img_ids, confs):
