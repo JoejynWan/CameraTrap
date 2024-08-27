@@ -1,4 +1,5 @@
 import os
+import warnings
 import numpy as np
 from datetime import datetime
 from tqdm import tqdm
@@ -42,8 +43,10 @@ class Plain(pl.LightningModule):
         self.save_hyperparameters(ignore=['conf', 'train_class_counts'])
         self.train_class_counts = train_class_counts
         self.id_to_labels = id_to_labels
-        self.net = models.__dict__[self.hparams.model_name](num_cls=self.hparams.num_classes, 
-                                                            num_layers=self.hparams.num_layers)
+        self.net = models.__dict__[self.hparams.model_name](train_class_counts=train_class_counts,
+                                                            num_cls=self.hparams.num_classes, 
+                                                            num_layers=self.hparams.num_layers,
+                                                            loss_type=self.hparams.loss_type)
 
     def configure_optimizers(self):
         """
@@ -67,7 +70,9 @@ class Plain(pl.LightningModule):
         ]
         # Setup optimizer and optimizer scheduler
         optimizer = torch.optim.SGD(net_optim_params_list)
-        scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=self.hparams.step_size, gamma=self.hparams.gamma)   
+        scheduler = optim.lr_scheduler.StepLR(optimizer, 
+                                              step_size=self.hparams.step_size, 
+                                              gamma=self.hparams.gamma)   
         return [optimizer], [scheduler]
 
     def on_train_start(self):
@@ -77,6 +82,29 @@ class Plain(pl.LightningModule):
         self.best_acc = 0
         self.net.feat_init()
         self.net.setup_criteria()
+
+    def on_train_epoch_start(self):
+        """
+        Hook function called at the start of each epoch during training. 
+        Initializes training procedure, adapted from https://github.com/kaidic/LDAM-DRW.git.
+        """
+        if self.hparams.train_rule == 'None':
+            self.per_cls_weights = None 
+        elif self.hparams.train_rule == 'Reweight':
+            beta = 0.9999
+            effective_num = 1.0 - np.power(beta, self.train_class_counts)
+            per_cls_weights = (1.0 - beta) / np.array(effective_num)
+            per_cls_weights = per_cls_weights / np.sum(per_cls_weights)*len(self.train_class_counts)
+            self.per_cls_weights = torch.tensor(per_cls_weights, dtype=torch.float32, device='cuda')
+        elif self.hparams.train_rule == 'DRW':
+            idx = self.current_epoch // 75 #Start re-weighting after epoch 75
+            betas = [0, 0.9999]
+            effective_num = 1.0 - np.power(betas[idx], self.train_class_counts)
+            per_cls_weights = (1.0 - betas[idx]) / np.array(effective_num)
+            per_cls_weights = per_cls_weights / np.sum(per_cls_weights)*len(self.train_class_counts)
+            self.per_cls_weights = torch.tensor(per_cls_weights, dtype=torch.float32, device='cuda')
+        else:
+            warnings.warn('Sample rule is not listed')
 
     def training_step(self, batch, batch_idx):
         """
@@ -95,7 +123,7 @@ class Plain(pl.LightningModule):
         feats = self.net.feature(data)
         logits = self.net.classifier(feats)
         # Calculate loss
-        loss = self.net.criterion_cls(logits, label_ids)
+        loss = self.net.criterion_cls(logits, label_ids, weight = self.per_cls_weights)
         self.log("train_loss", loss)
         
         return loss

@@ -1,10 +1,12 @@
 import os
 import copy
+import warnings
 from collections import OrderedDict
 import torch
 import torch.nn as nn
 from torchvision.models.resnet import BasicBlock, Bottleneck
 from torchvision.models.resnet import *
+from .losses import LDAMLoss, FocalLoss
 
 
 try:
@@ -95,7 +97,7 @@ class PlainResNetClassifier(nn.Module):
 
     name = 'PlainResNetClassifier'
 
-    def __init__(self, num_cls=10, num_layers=18):
+    def __init__(self, train_class_counts, num_cls=10, num_layers=18, loss_type="CE"):
         """
         Initialize the PlainResNetClassifier.
 
@@ -106,6 +108,8 @@ class PlainResNetClassifier(nn.Module):
         super(PlainResNetClassifier, self).__init__()
         self.num_cls = num_cls
         self.num_layers = num_layers
+        self.loss_type = loss_type
+        self.train_class_counts = train_class_counts
         self.feature = None
         self.classifier = None
         self.criterion_cls = None
@@ -143,8 +147,15 @@ class PlainResNetClassifier(nn.Module):
         """
         Set up the criterion for the classifier.
         """
-        # Criterion for binary classification
-        self.criterion_cls = nn.CrossEntropyLoss()
+        if self.loss_type == "CE":
+            self.criterion_cls = nn.CrossEntropyLoss()
+        elif self.loss_type == "LDAM":
+            self.criterion_cls = LDAMLoss(cls_num_list=self.train_class_counts, max_m=0.5, s=30)
+        elif self.loss_type == 'Focal':
+            self.criterion_cls = FocalLoss(gamma=1)
+        else:
+            warnings.warn('Loss type is not listed')
+            return
 
     def feat_init(self):
         """
