@@ -74,9 +74,9 @@ class RSG(pl.LightningModule):
         ]
         # Setup optimizer and optimizer scheduler
         optimizer = torch.optim.SGD(net_optim_params_list)
-        scheduler = optim.lr_scheduler.StepLR(optimizer, 
-                                              step_size=self.hparams.step_size, 
-                                              gamma=self.hparams.gamma)   
+        scheduler = optim.lr_scheduler.MultiStepLR(optimizer, 
+                                                   milestones=self.hparams.milestones, 
+                                                   gamma=self.hparams.gamma)   
         return [optimizer], [scheduler]
 
     def on_train_start(self):
