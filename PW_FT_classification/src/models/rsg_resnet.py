@@ -40,7 +40,8 @@ class ResNet(nn.Module):
 
     def __init__(self, block, layers, num_classes=1000, head_lists=[], zero_init_residual=False,
                  groups=1, width_per_group=64, phase_train=True, epoch_thresh=0, 
-                 replace_stride_with_dilation=None, norm_layer=None):
+                 replace_stride_with_dilation=None, norm_layer=None, n_center=15, 
+                 transfer_strength=1.0):
         super(ResNet, self).__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -75,9 +76,13 @@ class ResNet(nn.Module):
 
         if self.phase_train:
            self.head_lists = head_lists
-           self.RSG = RSG(n_center = 15, feature_maps_shape = [256*block.expansion, 14, 14], 
-                          num_classes = num_classes, contrastive_module_dim = 256, 
-                          head_class_lists = self.head_lists, epoch_thresh = epoch_thresh)
+           self.RSG = RSG(n_center = n_center, 
+                          feature_maps_shape = [256*block.expansion, 14, 14], 
+                          num_classes = num_classes, 
+                          contrastive_module_dim = 256, 
+                          head_class_lists = self.head_lists, 
+                          transfer_strength = transfer_strength, 
+                          epoch_thresh = epoch_thresh)
 
         # self.fc_ = NormedLinear(512 * block.expansion, num_classes)
 
@@ -182,6 +187,8 @@ class ResNetBackbone(ResNet):
         epoch_thresh=0,
         replace_stride_with_dilation=None,
         norm_layer=None,
+        n_center=15,
+        transfer_strength=0.1
     ):
         """
         Initialize the ResNet backbone.
@@ -207,6 +214,8 @@ class ResNetBackbone(ResNet):
             epoch_thresh=epoch_thresh,
             replace_stride_with_dilation=replace_stride_with_dilation,
             norm_layer=norm_layer,
+            n_center=n_center,
+            transfer_strength=transfer_strength
         )
 
 
@@ -220,7 +229,8 @@ class RSGResNet(nn.Module):
     name = 'RSGResNet'
 
     def __init__(self, train_class_counts, num_cls=10, num_layers=18, loss_type="CE", 
-                 head_lists=[], phase_train=False, epoch_thresh=0):
+                 head_lists=[], phase_train=False, epoch_thresh=0, n_center=15, 
+                 transfer_strength=0.1):
         """
         Initialize the RSGResNet.
 
@@ -239,6 +249,8 @@ class RSGResNet(nn.Module):
         self.head_lists = head_lists
         self.phase_train = phase_train
         self.epoch_thresh = epoch_thresh
+        self.n_center = n_center
+        self.transfer_strength = transfer_strength
 
         # Initialize the network with the specified settings
         self.setup_net()
@@ -268,7 +280,8 @@ class RSGResNet(nn.Module):
         # Constructing the feature extractor and classifier
         self.feature = ResNetBackbone(block, layers, num_classes=self.num_cls, 
                                       head_lists=self.head_lists, phase_train=self.phase_train, 
-                                      epoch_thresh=self.epoch_thresh, **kwargs)
+                                      epoch_thresh=self.epoch_thresh, n_center=self.n_center, 
+                                      transfer_strength=self.transfer_strength, **kwargs)
         self.classifier = NormedLinear(512 * block.expansion, self.num_cls)
 
     def setup_criteria(self):
