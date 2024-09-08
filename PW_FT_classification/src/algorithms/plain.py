@@ -98,7 +98,7 @@ class Plain(pl.LightningModule):
             per_cls_weights = per_cls_weights / np.sum(per_cls_weights)*len(self.train_class_counts)
             self.per_cls_weights = torch.tensor(per_cls_weights, dtype=torch.float32, device='cuda')
         elif self.hparams.train_rule == 'DRW':
-            idx = self.current_epoch // (self.num_epochs*0.75) #Start re-weighting 75% of max epochs
+            idx = self.current_epoch // int(self.num_epochs*0.75) #Start re-weighting 75% of max epochs
             betas = [0, 0.9999]
             effective_num = 1.0 - np.power(betas[idx], self.train_class_counts)
             per_cls_weights = (1.0 - betas[idx]) / np.array(effective_num)
