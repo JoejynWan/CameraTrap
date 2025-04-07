@@ -185,20 +185,32 @@ class Custom_Base(pl.LightningDataModule):
 
         print('Loading datasets...')
         # Load datasets for different modes (training, validation, testing, prediction)
-        if self.conf.predict:
+        if self.conf.mode == 'predict':
             self.dset_pr = self.ds(rootdir=self.conf.predict_root, dset='predict', transform=data_transforms['val'])
-        elif self.conf.test:
+            print('Prediction dataset loaded.')
+        elif self.conf.mode == 'test':
             self.dset_te = self.ds(rootdir=self.conf.dataset_root, dset='test', transform=data_transforms['val'])
             self.id_to_labels = {i: l for i, l in np.unique(pd.Series(zip(self.dset_te.label_ids, self.dset_te.labels)))}
-        else:
+            print('Testing dataset loaded.')
+        elif self.conf.mode == 'train_only' or self.conf.mode == 'val':
             self.dset_tr = self.ds(rootdir=self.conf.dataset_root, dset='train', transform=data_transforms['train'])
             self.dset_val = self.ds(rootdir=self.conf.dataset_root, dset='val', transform=data_transforms['val'])
 
             self.id_to_labels = {i: l for i, l in np.unique(pd.Series(zip(self.dset_tr.label_ids, self.dset_tr.labels)))}
             # Calculate class counts and label mappings
             self.unique_label_ids, self.train_class_counts = self.dset_tr.class_counts_cal()
-
-        print('Datasets loaded.')
+            print('Training and validation datasets loaded.')
+        elif self.conf.mode == 'train_test':
+            self.dset_tr = self.ds(rootdir=self.conf.dataset_root, dset='train', transform=data_transforms['train'])
+            self.dset_val = self.ds(rootdir=self.conf.dataset_root, dset='val', transform=data_transforms['val'])
+            self.dset_te = self.ds(rootdir=self.conf.dataset_root, dset='test', transform=data_transforms['val'])
+            
+            self.id_to_labels = {i: l for i, l in np.unique(pd.Series(zip(self.dset_tr.label_ids, self.dset_tr.labels)))}
+            # Calculate class counts and label mappings
+            self.unique_label_ids, self.train_class_counts = self.dset_tr.class_counts_cal()
+            print('Training, validation, and testing datasets loaded.')
+        else: 
+            print('Invalid mode. Please select "train_only", "train_test", "val", "test", or "predict".')
 
     def train_dataloader(self):
         """

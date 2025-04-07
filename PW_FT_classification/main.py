@@ -30,9 +30,7 @@ def main(
         session:int=0,
         seed:int=0,
         dev:bool=False,
-        val:bool=False,
-        test:bool=False,
-        predict:bool=False,
+        mode:str='train_test', #"train_only", "train_test", "val", "test", or "predict"
         predict_root:str=""
     ):
     """
@@ -68,9 +66,7 @@ def main(
     with open(config) as f:
         conf = Munch(yaml.load(f, Loader=yaml.FullLoader))
     conf.evaluate = evaluate
-    conf.val = val
-    conf.test = test
-    conf.predict = predict
+    conf.mode = mode
     conf.predict_root = predict_root
 
     # Set a global seed for reproducibility
@@ -165,11 +161,11 @@ def main(
     )
     # Training, validation, or evaluation execution based on the mode
     if evaluate is not None:
-        if val:
+        if conf.mode == 'val':
             trainer.validate(learner, dataloaders=[dataset.val_dataloader()], ckpt_path=evaluate)
-        elif predict:
+        elif conf.mode == 'predict':
             trainer.predict(learner, dataloaders=[dataset.predict_dataloader()], ckpt_path=evaluate)
-        elif test:
+        elif conf.mode == 'test':
             trainer.test(learner, dataloaders=[dataset.test_dataloader()], ckpt_path=evaluate)
         else:
             print('Invalid mode for evaluation.')
