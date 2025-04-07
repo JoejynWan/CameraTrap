@@ -22,12 +22,19 @@ batch_size: 32
 num_workers: 4 #40
 # model
 num_classes: 2 
-model_name: PlainResNetClassifier
+model_name: PlainResNetClassifier # options are: PlainResNetClassifier or RSGResNet
 num_layers: 18
 weights_init: ImageNet
+loss_type: LDAM # options are: CE, LDAM, or Focal
+# RSG
+head_lists: [1,2,3,4,7,14,17,19,25] #classes with many samples
+epoch_thresh: 150
+n_center: 15
+transfer_strength: 0.01
 
 # optim
 ## feature
+train_rule: DRW #options are: None, Reweight, or DRW
 lr_feature: 0.01
 momentum_feature: 0.9
 weight_decay_feature: 0.0005
@@ -36,6 +43,6 @@ lr_classifier: 0.01
 momentum_classifier: 0.9
 weight_decay_classifier: 0.0005
 ## lr_scheduler
-step_size: 10
+step_size: 10 # for StepLR scheduler in plain algo
+milestones: [55, 75, 90] #for MultiStepLR scheduler in rsg algo
 gamma: 0.1
-
