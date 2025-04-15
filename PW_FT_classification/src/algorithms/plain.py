@@ -1,6 +1,7 @@
 import os
 import numpy as np
 import json
+import pandas as pd
 from datetime import datetime
 from tqdm import tqdm
 import random
@@ -172,14 +173,23 @@ class Plain(pl.LightningModule):
         total_file_ids = np.concatenate([x[5] for x in self.te_st_outs], axis=0)
 
         # Calculate the metrics and save the output
-        self.eval_logging(total_preds[total_label_ids != -1],
-                          total_label_ids[total_label_ids != -1],
-                          print_class_acc=False)
+        class_acc_df = self.eval_logging(total_preds[total_label_ids != -1],
+                                         total_label_ids[total_label_ids != -1],
+                                         print_class_acc = False)
+        class_acc_csv_path = os.path.join(self.hparams.save_dir, 'class_acc.csv') 
+        class_acc_df.to_csv(class_acc_csv_path, index = False)
 
-        output_path = self.hparams.evaluate.replace('.ckpt', 'eval.npz') 
-        np.savez(output_path, preds=total_preds, label_ids=total_label_ids, feats=total_feats,
+        eval_csv = pd.DataFrame(data={"file_ids": total_file_ids,
+                                      "preds": total_preds,
+                                      "label_ids": total_label_ids,
+                                      "labels": total_labels})
+        eval_csv_path = os.path.join(self.hparams.save_dir, 'test_eval.csv') 
+        eval_csv.to_csv(eval_csv_path, index = False)
+
+        npz_path = os.path.join(self.hparams.save_dir, 'test_eval.npz') 
+        np.savez(npz_path, preds=total_preds, label_ids=total_label_ids, feats=total_feats,
                  logits=total_logits, labels=total_labels, file_ids=total_file_ids)  
-        print('Test output saved to {}.'.format(output_path))
+        print('Test outputs saved to {}.'.format(self.hparams.save_dir))
 
     def on_predict_start(self):
         """
@@ -258,14 +268,17 @@ class Plain(pl.LightningModule):
         self.log("valid_mac_acc", mac_acc * 100)
         self.log("valid_mic_acc", mic_acc * 100)
 
-        if print_class_acc:
+        if self.train_class_counts:
+            acc_list = [(class_acc[i], unique_eval_labels[i],
+                         self.id_to_labels[unique_eval_labels[i]],
+                         self.train_class_counts[unique_eval_labels[i]])
+                         for i in range(len(class_acc))]
+            
+            acc_df = pd.DataFrame(acc_list,columns=['acc', 'label_ids', 'labels', 'train_class_counts'])
+            acc_df = acc_df[['label_ids', 'labels', 'train_class_counts', 'acc']]
+            acc_df["acc"] = pd.to_numeric(acc_df["acc"])
 
-            if self.train_class_counts:
-                acc_list = [(class_acc[i], unique_eval_labels[i],
-                             self.id_to_labels[unique_eval_labels[i]],
-                             self.train_class_counts[unique_eval_labels[i]])
-                             for i in range(len(class_acc))]
-
+            if print_class_acc:
                 print('\n')
                 for i in range(len(class_acc)):
                     info = '{:>20} ({:<3}, tr {:>3}) Acc: '.format(acc_list[i][2],
@@ -273,13 +286,20 @@ class Plain(pl.LightningModule):
                                                                    acc_list[i][3])
                     info += '{:.2f}'.format(acc_list[i][0] * 100)
                     print(info)
-            else:
-                acc_list = [(class_acc[i], unique_eval_labels[i],
-                             self.id_to_labels[unique_eval_labels[i]])
-                             for i in range(len(class_acc))]
+        else:
+            acc_list = [(class_acc[i], unique_eval_labels[i],
+                            self.id_to_labels[unique_eval_labels[i]])
+                            for i in range(len(class_acc))]
 
+            acc_df = pd.DataFrame(acc_list,columns=['acc', 'label_ids', 'labels'])
+            acc_df = acc_df[['label_ids', 'labels', 'acc']]
+            acc_df["acc"] = pd.to_numeric(acc_df["acc"])
+
+            if print_class_acc:
                 print('\n')
                 for i in range(len(class_acc)):
                     info = '{:>20} ({:<3}) Acc: '.format(acc_list[i][2], acc_list[i][1])
                     info += '{:.2f}'.format(acc_list[i][0] * 100)
                     print(info)
+
+        return(acc_df)
