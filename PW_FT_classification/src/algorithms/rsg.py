@@ -126,7 +126,10 @@ class RSG(pl.LightningModule):
         logits = self.net.classifier(feats)
 
         # Calculate loss
-        loss = self.net.criterion_cls(logits, combine_target, weight = self.per_cls_weights) 
+        if self.hparams.loss_type == 'CE':
+            loss = self.net.criterion_cls(logits, combine_target)
+        else:  
+            loss = self.net.criterion_cls(logits, combine_target, weight = self.per_cls_weights) 
         loss = loss + 0.1 * cesc_loss.mean() + 0.01 * total_mv_loss.mean()
         self.log("train_loss", loss)
         
