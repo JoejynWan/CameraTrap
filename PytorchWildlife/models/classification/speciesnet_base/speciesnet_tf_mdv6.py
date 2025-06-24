@@ -1,3 +1,4 @@
+import os
 import multiprocessing as mp
 
 from speciesnet import SpeciesNet
@@ -9,17 +10,18 @@ from ..base_classifier import BaseClassifierInference
 __all__ = ["SpeciesNetTFInferenceMD6"]
 
 def get_by_key(lst, key, value):
-    return next(filter(lambda x: itemgetter(key)(x) == value, lst), None)
+    normalized_value = os.path.normpath(str(value))
+    return next((item for item in lst if os.path.normpath(str(item.get(key))) == normalized_value), None)
 
 
 class SpeciesNetTFInferenceMD6(BaseClassifierInference):
     """
     Inference module for the PlainResNet Classifier.
     """
-    def __init__(self, version='v4.0.0a', run_mode='multi_thread', geofence=True):
+    def __init__(self, version='v4.0.1a', run_mode='multi_thread', geofence=True):
         super(SpeciesNetTFInferenceMD6, self).__init__()
 
-        self.model_url = 'kaggle:google/speciesnet/keras/{}'.format(version)
+        self.model_url = 'kaggle:google/speciesnet/pyTorch/{}'.format(version)
         self.run_mode = run_mode 
         self.geofence = geofence
 

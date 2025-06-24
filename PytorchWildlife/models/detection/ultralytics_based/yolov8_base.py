@@ -214,7 +214,8 @@ class YOLOV8Base(BaseDetector):
                     res = self.results_generation(preds, paths[idx], id_strip)
                     size = preds.orig_shape
                     # Normalize the coordinates for timelapse compatibility
-                    normalized_coords = [[x1 / size[1], y1 / size[0], x2 / size[1], y2 / size[0]] for x1, y1, x2, y2 in res["detections"].xyxy]
+                    normalized_coords = [[x1 / size[1], y1 / size[0], x2 / size[1], y2 / size[0]] 
+                                         for x1, y1, x2, y2 in res["detections"].xyxy]
                     res["normalized_coords"] = normalized_coords
                     results.append(res)
                 pbar.update(1)
