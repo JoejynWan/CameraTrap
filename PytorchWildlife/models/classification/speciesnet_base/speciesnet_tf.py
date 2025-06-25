@@ -1,29 +1,30 @@
+import os
 import multiprocessing as mp
 
 from speciesnet import SpeciesNet
 from speciesnet.utils import prepare_instances_dict
 
-from operator import itemgetter
 from ..base_classifier import BaseClassifierInference 
 
 __all__ = ["SpeciesNetTFInference"]
 
 def get_by_key(lst, key, value):
-    return next(filter(lambda x: itemgetter(key)(x) == value, lst), None)
+    normalized_value = os.path.normpath(str(value))
+    return next((item for item in lst if os.path.normpath(str(item.get(key))) == normalized_value), None)
 
 
 class SpeciesNetTFInference(BaseClassifierInference):
     """
     Inference module for the PlainResNet Classifier.
     """
-    def __init__(self, version='v4.0.0a', run_mode='multi_thread', geofence=True):
+    def __init__(self, version='v4.0.1a', run_mode='multi_thread', geofence=True):
         super(SpeciesNetTFInference, self).__init__()
 
-        self.model_url = 'kaggle:google/speciesnet/keras/{}'.format(version)
+        self.model_url = 'kaggle:google/speciesnet/pyTorch/{}'.format(version)
         self.run_mode = run_mode 
         self.geofence = geofence
 
-        self.progress_bars = True
+        self.progress_bars = False
 
         try:
             mp.set_start_method('spawn')
@@ -40,6 +41,9 @@ class SpeciesNetTFInference(BaseClassifierInference):
             # target_species_txt=target_species_txt,
             multiprocessing=(self.run_mode == "multi_process"),
         )
+
+        self.id_to_label = self.model.classifier.labels
+        self.label_to_id = {v: k for k, v in self.model.classifier.labels.items()}
 
     def detections_dict_generation(self, det_results):
         detections_dict = {}
@@ -59,6 +63,7 @@ class SpeciesNetTFInference(BaseClassifierInference):
             for _ in range(len(det['normalized_coords'])):
                 clf_results.append({
                     'img_id': pred['filepath'],
+                    'class_id': self.label_to_id[pred['classifications']['classes'][0]], 
                     'prediction': pred['classifications']['classes'][0].split(';')[-1],
                     'confidence': pred['classifications']['scores'][0]
                 })
