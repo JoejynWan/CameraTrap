@@ -25,7 +25,7 @@ detection_model = pw_detection.MegaDetectorV6(device=DEVICE, pretrained=True, ve
 # detection_model = pw_detection.MegaDetectorV5(device=DEVICE, pretrained=True, version="a")
 
 # %%
-classification_model = pw_classification.speciesnet_base.SpeciesNetTFInferenceMD6(
+classification_model = pw_classification.speciesnet_base.SpeciesNetTFInference(
     version='v4.0.1a', 
     run_mode='multi_thread'
 )
@@ -35,7 +35,7 @@ classification_model = pw_classification.speciesnet_base.SpeciesNetTFInferenceMD
 tgt_img_path = os.path.join("demo_data","imgs","10050028_0.JPG")
 
 # Performing the detection on the single image
-det_results = detection_model.single_image_detection(tgt_img_path)
+det_results = detection_model.single_image_detection(tgt_img_path, verbose = False)
 
 # %%
 clf_conf_thres = 0.8
