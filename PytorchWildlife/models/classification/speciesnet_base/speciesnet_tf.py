@@ -69,10 +69,11 @@ class SpeciesNetTFInference(BaseClassifierInference):
                 })
         return clf_results
 
-    def single_image_classification(self, file_path, det_results=None):
+    def single_image_classification(self, file_path, det_results=None, country=None):
 
         instances_dict = prepare_instances_dict(
             filepaths=[file_path],
+            country = country, 
         )
 
         predictions_dict = self.model.classify(
@@ -84,10 +85,11 @@ class SpeciesNetTFInference(BaseClassifierInference):
         )
         return self.results_generation(predictions_dict, [det_results])
 
-    def batch_image_classification(self, data_path, batch_size=8, det_results=None):
+    def batch_image_classification(self, data_path, batch_size=8, det_results=None, country=None):
 
         instances_dict = prepare_instances_dict(
-            folders=[data_path]
+            folders=[data_path],
+            country=country,
         )
 
         predictions_dict = self.model.classify(
