@@ -11,6 +11,9 @@ ultralytics
 yolov5
 setuptools
 scikit-learn
+lightning
+omegaconf
+pycocotools
 timm
 mkdocs
 mkdocs-get-deps
