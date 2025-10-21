@@ -116,11 +116,16 @@ class Plain(pl.LightningModule):
             batch_idx: The index of the current batch.
         """
         data, label_ids = batch[0], batch[1]
+
         # Forward pass
         feats = self.net.feature(data)
         logits = self.net.classifier(feats)
         preds = logits.argmax(dim=1)
         
+        # Calculate loss
+        loss = self.net.criterion_cls(logits, label_ids)
+        self.log("valid_loss", loss)
+
         self.val_st_outs.append((preds.detach().cpu().numpy(),
                                  label_ids.detach().cpu().numpy()))
 
@@ -268,7 +273,7 @@ class Plain(pl.LightningModule):
         self.log("valid_mac_acc", mac_acc * 100)
         self.log("valid_mic_acc", mic_acc * 100)
 
-        if self.train_class_counts:
+        if self.train_class_counts.any():
             acc_list = [(class_acc[i], unique_eval_labels[i],
                          self.id_to_labels[unique_eval_labels[i]],
                          self.train_class_counts[unique_eval_labels[i]])
