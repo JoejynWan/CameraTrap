@@ -284,16 +284,16 @@ class RSGResNet(nn.Module):
                                       transfer_strength=self.transfer_strength, **kwargs)
         self.classifier = NormedLinear(512 * block.expansion, self.num_cls)
 
-    def setup_criteria(self):
+    def setup_criteria(self, weight):
         """
         Set up the criterion for the classifier.
         """
         if self.loss_type == "CE":
-            self.criterion_cls = nn.CrossEntropyLoss()
+            self.criterion_cls = nn.CrossEntropyLoss(weight=weight)
         elif self.loss_type == "LDAM":
-            self.criterion_cls = LDAMLoss(cls_num_list=self.train_class_counts, max_m=0.5, s=30)
+            self.criterion_cls = LDAMLoss(cls_num_list=self.train_class_counts, max_m=0.5, weight=weight, s=30)
         elif self.loss_type == 'Focal':
-            self.criterion_cls = FocalLoss(gamma=1)
+            self.criterion_cls = FocalLoss(weight=weight, gamma=1)
         else:
             warnings.warn('Loss type is not listed')
             return

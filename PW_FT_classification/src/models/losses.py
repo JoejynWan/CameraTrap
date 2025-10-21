@@ -12,17 +12,18 @@ def focal_loss(input_values, gamma):
     return loss.mean()
 
 class FocalLoss(nn.Module):
-    def __init__(self, gamma=0.):
+    def __init__(self, weight=None, gamma=0.):
         super(FocalLoss, self).__init__()
         assert gamma >= 0
         self.gamma = gamma
+        self.weight = weight
 
-    def forward(self, input, target, weight):
-        return focal_loss(F.cross_entropy(input, target, reduction='none', weight=weight), self.gamma)
+    def forward(self, input, target):
+        return focal_loss(F.cross_entropy(input, target, reduction='none', weight=self.weight), self.gamma)
 
 class LDAMLoss(nn.Module):
     
-    def __init__(self, cls_num_list, max_m=0.5, s=30):
+    def __init__(self, cls_num_list, max_m=0.5, weight=None, s=30):
         super(LDAMLoss, self).__init__()
         m_list = 1.0 / np.sqrt(np.sqrt(cls_num_list))
         m_list = m_list * (max_m / np.max(m_list))
@@ -30,8 +31,9 @@ class LDAMLoss(nn.Module):
         self.m_list = m_list
         assert s > 0
         self.s = s
+        self.weight = weight
 
-    def forward(self, x, target, weight):
+    def forward(self, x, target):
         index = torch.zeros_like(x, dtype=torch.uint8)
         index.scatter_(1, target.data.view(-1, 1), 1)
         
@@ -41,5 +43,5 @@ class LDAMLoss(nn.Module):
         x_m = x - batch_m
     
         output = torch.where(index.bool(), x_m, x)
-        return F.cross_entropy(self.s*output, target, weight=weight)
+        return F.cross_entropy(self.s*output, target, weight=self.weight)
     

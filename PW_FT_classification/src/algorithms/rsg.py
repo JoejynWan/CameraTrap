@@ -82,7 +82,6 @@ class RSG(pl.LightningModule):
         """
         self.best_acc = 0
         self.net.feat_init()
-        self.net.setup_criteria()
 
     def on_train_epoch_start(self):
         """
@@ -107,6 +106,8 @@ class RSG(pl.LightningModule):
         else:
             warnings.warn('Sample rule is not listed')
 
+        self.net.setup_criteria(weight=self.per_cls_weights)
+
     def training_step(self, batch, batch_idx):
         """
         Training step for each batch.
@@ -126,10 +127,7 @@ class RSG(pl.LightningModule):
         logits = self.net.classifier(feats)
 
         # Calculate loss
-        if self.hparams.loss_type == 'CE':
-            loss = self.net.criterion_cls(logits, combine_target)
-        else:  
-            loss = self.net.criterion_cls(logits, combine_target, weight = self.per_cls_weights) 
+        loss = self.net.criterion_cls(logits, combine_target) 
         loss = loss + 0.1 * cesc_loss.mean() + 0.01 * total_mv_loss.mean()
         self.log("train_loss", loss)
         
@@ -155,6 +153,10 @@ class RSG(pl.LightningModule):
         feats = self.net.feature(data, phase_train=False)
         logits = self.net.classifier(feats)
         preds = logits.argmax(dim=1)
+
+        # Calculate loss
+        loss = self.net.criterion_cls(logits, label_ids)
+        self.log("valid_loss", loss)
         
         self.val_st_outs.append((preds.detach().cpu().numpy(),
                                  label_ids.detach().cpu().numpy()))
